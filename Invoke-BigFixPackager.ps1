@@ -686,10 +686,12 @@ catch
 function Build-FixletXml {
     param(
         [string]$Title,
+        [string]$Description,
         [string]$Relevance,
         [string]$ActionScript,
         [string]$Category,
-        [string]$SourceSeverity = "Moderate",
+        [string]$Source = "Internal",
+        [string]$SourceSeverity = "",
         [string]$IconBase64DataUri = ""
     )
     
@@ -710,10 +712,10 @@ function Build-FixletXml {
 <BES xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="BES.xsd">
   <Fixlet>
     <Title>$titleEsc</Title>
-    <Description></Description>
+    <Description>$(SafeEscape $Description)</Description>
     <Relevance><![CDATA[$relCdata]]></Relevance>
     <Category>$catEsc</Category>
-    <Source>Internal</Source>
+    <Source>$(SafeEscape $Source)</Source>
     <SourceSeverity>$sevEsc</SourceSeverity>$iconElement
     <DefaultAction ID="Action1">
       <ActionScript MIMEType="application/x-Fixlet-Windows-Shell"><![CDATA[$actCdata]]></ActionScript>
@@ -1357,10 +1359,10 @@ $btnPostAll.Add_Click({
         
         LogLine "Fixlet POST URL: $fixletPostUrl"
         
-        # Build action scripts
-        $installAS = "prefetch`r`n$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-        $updateAS  = "prefetch`r`n$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-        $removeAS  = "prefetch`r`n$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
+        # Build action scripts (no "prefetch" keyword — posted in command)
+        $installAS = "$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+        $updateAS  = "$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+        $removeAS  = "$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
         
         # Get icon base64 if available
         $iconDataUri = ""
@@ -1376,16 +1378,16 @@ $btnPostAll.Add_Click({
         
         # Build and post fixlets
         $fixlets = @(
-            @{ Kind="Install"; Title="Install: $displayName"; Relevance=$tbInstallRel.Text; ActionScript=$installAS },
-            @{ Kind="Update";  Title="Update: $displayName";  Relevance=$tbUpdateRel.Text;  ActionScript=$updateAS  },
-            @{ Kind="Remove";  Title="Remove: $displayName";  Relevance=$tbRemoveRel.Text;  ActionScript=$removeAS  }
+            @{ Kind="Install"; Title="Install: $displayName $version Win"; Description="This fixlet will install $displayName $version."; Category="Install"; Source="Install"; Relevance=$tbInstallRel.Text; ActionScript=$installAS },
+            @{ Kind="Update";  Title="Update: $displayName $version Win";  Description="This fixlet will update $displayName to version $version."; Category="Pending"; Source="Pending"; Relevance=$tbUpdateRel.Text;  ActionScript=$updateAS  },
+            @{ Kind="Remove";  Title="Remove: $displayName $version Win";  Description="This fixlet will remove $displayName $version."; Category="Remove"; Source="Remove"; Relevance=$tbRemoveRel.Text;  ActionScript=$removeAS  }
         )
         
         $fixletIds = @()
         
         foreach ($fx in $fixlets) {
             LogLine ("Creating fixlet: {0}" -f $fx.Title)
-            $xml = Build-FixletXml -Title $fx.Title -Relevance $fx.Relevance -ActionScript $fx.ActionScript -Category $fx.Kind -IconBase64DataUri $iconDataUri
+            $xml = Build-FixletXml -Title $fx.Title -Description $fx.Description -Relevance $fx.Relevance -ActionScript $fx.ActionScript -Category $fx.Category -Source $fx.Source -IconBase64DataUri $iconDataUri
             
             $resp = Post-Xml -Url $fixletPostUrl -User $fixletCreds.User -Pass $fixletCreds.Pass -XmlBody $xml
             
@@ -1431,7 +1433,7 @@ $btnPostAll.Add_Click({
             }
             
             $offerXml = Build-OfferXml `
-                -DisplayName $displayName `
+                -DisplayName "$displayName $version" `
                 -SiteName $site `
                 -FixletId $fixletIds[$i] `
                 -FixletActionName $FixletActionName_Default `
