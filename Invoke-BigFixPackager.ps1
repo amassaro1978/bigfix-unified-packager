@@ -1658,7 +1658,7 @@ $btnCreateDoc.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#0078D7")
 $btnCreateDoc.ForeColor = [System.Drawing.Color]::White
 $btnCreateDoc.FlatAppearance.BorderSize = 0
 $btnCreateDoc.Font = New-Object System.Drawing.Font("Segoe UI", 11, [System.Drawing.FontStyle]::Bold)
-$btnCreateDoc.Enabled = $true
+$btnCreateDoc.Enabled = $false
 $form.Controls.Add($btnCreateDoc)
 
 # Track pipeline results for doc generation
