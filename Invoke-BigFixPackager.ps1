@@ -1363,10 +1363,10 @@ $btnPostAll.Add_Click({
         
         LogLine "Fixlet POST URL: $fixletPostUrl"
         
-        # Build action scripts (prefetch is posted via command, not in action script)
-        $installAS = "action uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-        $updateAS  = "action uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-        $removeAS  = "action uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
+        # Build action scripts (prefetch content pasted by user, no extra "prefetch" keyword)
+        $installAS = "$prefetch`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+        $updateAS  = "$prefetch`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+        $removeAS  = "$prefetch`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
         
         # Get icon base64 if available
         $iconDataUri = ""
@@ -1683,9 +1683,9 @@ $btnCreateDoc.Add_Click({
     $safeFileName = ($displayName -replace '[^\w\-\.]','_') + "_v" + ($version -replace '[^\w\.\-]','_')
     
     $psadtExe = ("{0}{1}-{2}.exe" -f $vendor, $appName, $version) -replace '\s+', ''
-    $installAS = "action uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-    $updateAS  = "action uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-    $removeAS  = "action uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
+    $installAS = "$($tbPrefetch.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+    $updateAS  = "$($tbPrefetch.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+    $removeAS  = "$($tbPrefetch.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
     
     $iconUri = ""
     if ($script:SelectedIconPath -and (Test-Path $script:SelectedIconPath)) {
