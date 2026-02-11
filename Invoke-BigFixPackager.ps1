@@ -1287,7 +1287,7 @@ $btnSignScript.Add_Click({
             return
         }
         
-        $result = Set-AuthenticodSignature -FilePath $script:GeneratedScriptPath -Certificate $cert -TimestampServer "http://timestamp.digicert.com"
+        $result = Set-AuthenticodeSignature -FilePath $script:GeneratedScriptPath -Certificate $cert -TimestampServer "http://timestamp.digicert.com"
         
         if ($result.Status -eq "Valid") {
             LogLine "[OK] Script signed successfully"
