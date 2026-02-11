@@ -1006,17 +1006,12 @@ $lblSignStatus = Add-Label "" 450 ($y + 6)
 
 # --- Section: Prefetch ---
 $y += 45
-Add-Label "- Prefetch / Extract (paste after Software Upload Wizard) -" 10 $y -Bold | Out-Null
+Add-Label "- Prefetch / Extract (paste both lines from Software Upload Wizard) -" 10 $y -Bold | Out-Null
 $y += 25
 
-Add-Label "Prefetch Line:" 10 $y | Out-Null
-$tbPrefetch = New-StyledTextBox 180 $y 700 60 $true
+Add-Label "Prefetch + Extract:" 10 $y | Out-Null
+$tbPrefetch = New-StyledTextBox 180 $y 700 80 $true
 $form.Controls.Add($tbPrefetch)
-
-$y += 70
-Add-Label "Extract Line:" 10 $y | Out-Null
-$tbExtract = New-StyledTextBox 180 $y 700 40 $true
-$form.Controls.Add($tbExtract)
 
 # --- Section: Relevance ---
 $y += 55
@@ -1327,7 +1322,7 @@ $btnPostAll.Add_Click({
     $version   = if ($tbFileVersion.Text.Trim()) { $tbFileVersion.Text.Trim() } else { $tbPkgVersion.Text.Trim() }
     $psadtExe  = ("{0}{1}-{2}.exe" -f $vendor, $appName, $version) -replace '\s+', ''
     $prefetch  = $tbPrefetch.Text.Trim()
-    $extract   = $tbExtract.Text.Trim()
+    $extract   = ""  # combined into prefetch field
     $server    = $cbServer.SelectedItem
     $site      = $cbSite.SelectedItem
     
@@ -1368,10 +1363,10 @@ $btnPostAll.Add_Click({
         
         LogLine "Fixlet POST URL: $fixletPostUrl"
         
-        # Build action scripts (no "prefetch" keyword — posted in command)
-        $installAS = "$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-        $updateAS  = "$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-        $removeAS  = "$prefetch`r`n$extract`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
+        # Build action scripts (prefetch field contains both prefetch + extract lines)
+        $installAS = "$prefetch`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+        $updateAS  = "$prefetch`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+        $removeAS  = "$prefetch`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
         
         # Get icon base64 if available
         $iconDataUri = ""
@@ -1688,9 +1683,9 @@ $btnCreateDoc.Add_Click({
     $safeFileName = ($displayName -replace '[^\w\-\.]','_') + "_v" + ($version -replace '[^\w\.\-]','_')
     
     $psadtExe = ("{0}{1}-{2}.exe" -f $vendor, $appName, $version) -replace '\s+', ''
-    $installAS = "prefetch`r`n$($tbPrefetch.Text.Trim())`r`n$($tbExtract.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-    $updateAS  = "prefetch`r`n$($tbPrefetch.Text.Trim())`r`n$($tbExtract.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
-    $removeAS  = "prefetch`r`n$($tbPrefetch.Text.Trim())`r`n$($tbExtract.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
+    $installAS = "$($tbPrefetch.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+    $updateAS  = "$($tbPrefetch.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Install -DeployMode Silent"
+    $removeAS  = "$($tbPrefetch.Text.Trim())`r`naction uses wow64 redirection false`r`nwait __Download\$psadtExe -DeploymentType Uninstall -DeployMode Silent"
     
     $iconUri = ""
     if ($script:SelectedIconPath -and (Test-Path $script:SelectedIconPath)) {
@@ -1765,8 +1760,16 @@ $btnCreateDoc.Add_Click({
     
     if (-not $script:DocSaveChoice) { return }
     
-    # Default save location = PSADT folder or temp
-    $saveDir = if ($psadtFolder -ne "(no folder selected)" -and (Test-Path $psadtFolder)) { $psadtFolder } else { $env:TEMP }
+    # Save docs 2 levels up from PSADT folder (Version folder in \\server\share\Vendor\All\Version\Files\)
+    $saveDir = $env:TEMP
+    if ($psadtFolder -ne "(no folder selected)" -and (Test-Path $psadtFolder)) {
+        $versionFolder = Split-Path (Split-Path $psadtFolder -Parent) -Parent
+        if ($versionFolder -and (Test-Path $versionFolder)) {
+            $saveDir = $versionFolder
+        } else {
+            $saveDir = $psadtFolder
+        }
+    }
     
     # If pipeline hasn't run, use placeholder IDs
     if (-not $script:PipelineFixletIds -or $script:PipelineFixletIds.Count -eq 0) {
