@@ -83,7 +83,16 @@ function LogLine($txt) {
         }
         $dir = Split-Path $LogFile -Parent
         if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
-        Add-Content -Path $LogFile -Value $line
+        # Use FileStream with shared read/write to avoid conflicts with CMTrace
+        try {
+            $fs = [System.IO.FileStream]::new($LogFile, [System.IO.FileMode]::Append, [System.IO.FileAccess]::Write, [System.IO.FileShare]::ReadWrite)
+            $sw = [System.IO.StreamWriter]::new($fs)
+            $sw.WriteLine($line)
+            $sw.Close()
+            $fs.Close()
+        } catch {
+            # Silently skip file write if still locked
+        }
     } catch {}
 }
 
