@@ -1724,67 +1724,7 @@ $btnCreateDoc.Add_Click({
         -InstallActionScript $installAS -UpdateActionScript $updateAS -RemoveActionScript $removeAS `
         -KbLink $(if ($tbKbLink.Text -ne "(optional) ServiceNow KB article URL" -and -not [string]::IsNullOrWhiteSpace($tbKbLink.Text)) { $tbKbLink.Text } else { "" })
     
-    # Ask user for save format
-    $formatForm = New-Object System.Windows.Forms.Form
-    $formatForm.Text = "Save Deployment Document"
-    $formatForm.Size = New-Object System.Drawing.Size(360, 180)
-    $formatForm.StartPosition = "CenterParent"
-    $formatForm.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#2D2D30")
-    $formatForm.ForeColor = [System.Drawing.Color]::White
-    $formatForm.Font = New-Object System.Drawing.Font("Segoe UI", 10)
-    $formatForm.FormBorderStyle = "FixedDialog"
-    $formatForm.MaximizeBox = $false
-    $formatForm.MinimizeBox = $false
-    
-    $lblFmt = New-Object System.Windows.Forms.Label
-    $lblFmt.Text = "Choose export format:"
-    $lblFmt.Location = New-Object System.Drawing.Point(15, 15)
-    $lblFmt.AutoSize = $true
-    $formatForm.Controls.Add($lblFmt)
-    
-    $btnPdf = New-Object System.Windows.Forms.Button
-    $btnPdf.Text = "Save as PDF"
-    $btnPdf.Size = New-Object System.Drawing.Size(150, 38)
-    $btnPdf.Location = New-Object System.Drawing.Point(15, 50)
-    $btnPdf.FlatStyle = "Flat"
-    $btnPdf.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#D13438")
-    $btnPdf.ForeColor = [System.Drawing.Color]::White
-    $btnPdf.FlatAppearance.BorderSize = 0
-    $btnPdf.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-    $formatForm.Controls.Add($btnPdf)
-    
-    $btnWord = New-Object System.Windows.Forms.Button
-    $btnWord.Text = "Save as Word Doc"
-    $btnWord.Size = New-Object System.Drawing.Size(150, 38)
-    $btnWord.Location = New-Object System.Drawing.Point(180, 50)
-    $btnWord.FlatStyle = "Flat"
-    $btnWord.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#2B579A")
-    $btnWord.ForeColor = [System.Drawing.Color]::White
-    $btnWord.FlatAppearance.BorderSize = 0
-    $btnWord.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-    $formatForm.Controls.Add($btnWord)
-    
-    $btnBothFmt = New-Object System.Windows.Forms.Button
-    $btnBothFmt.Text = "Save Both"
-    $btnBothFmt.Size = New-Object System.Drawing.Size(315, 32)
-    $btnBothFmt.Location = New-Object System.Drawing.Point(15, 98)
-    $btnBothFmt.FlatStyle = "Flat"
-    $btnBothFmt.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#107C10")
-    $btnBothFmt.ForeColor = [System.Drawing.Color]::White
-    $btnBothFmt.FlatAppearance.BorderSize = 0
-    $btnBothFmt.Font = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Bold)
-    $formatForm.Controls.Add($btnBothFmt)
-    
-    $script:DocSaveChoice = $null
-    $btnPdf.Add_Click({ $script:DocSaveChoice = "pdf"; $formatForm.Close() })
-    $btnWord.Add_Click({ $script:DocSaveChoice = "word"; $formatForm.Close() })
-    $btnBothFmt.Add_Click({ $script:DocSaveChoice = "both"; $formatForm.Close() })
-    
-    $formatForm.ShowDialog() | Out-Null
-    
-    if (-not $script:DocSaveChoice) { return }
-    
-    # Save docs 2 levels up from PSADT folder (Version folder in \\server\share\Vendor\All\Version\Files\)
+    # Save HTML directly — no format picker
     $saveDir = $env:TEMP
     if ($psadtFolder -ne "(no folder selected)" -and (Test-Path $psadtFolder)) {
         $versionFolder = Split-Path (Split-Path $psadtFolder -Parent) -Parent
@@ -1800,75 +1740,17 @@ $btnCreateDoc.Add_Click({
         $script:PipelineFixletIds = @("(pending)", "(pending)", "(pending)")
     }
     
-    $savedFiles = @()
-    
-    # Save HTML (intermediate for PDF)
     $htmlPath = Join-Path $saveDir "$safeFileName`_DeploymentDoc.html"
     [System.IO.File]::WriteAllText($htmlPath, $html, [System.Text.Encoding]::UTF8)
     
-    if ($script:DocSaveChoice -eq "pdf" -or $script:DocSaveChoice -eq "both") {
-        $pdfPath = Join-Path $saveDir "$safeFileName`_DeploymentDoc.pdf"
-        try {
-            # Use Edge/Chrome to print HTML to PDF
-            $edgePath = "C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe"
-            $chromePath = "C:\Program Files\Google\Chrome\Application\chrome.exe"
-            $browserExe = if (Test-Path $edgePath) { $edgePath } elseif (Test-Path $chromePath) { $chromePath } else { $null }
-            
-            if ($browserExe) {
-                $pdfArgs = "--headless --disable-gpu --no-sandbox --print-to-pdf=`"$pdfPath`" --print-to-pdf-no-header `"$htmlPath`""
-                $proc = Start-Process -FilePath $browserExe -ArgumentList $pdfArgs -Wait -PassThru -WindowStyle Hidden
-                if (Test-Path $pdfPath) {
-                    $savedFiles += $pdfPath
-                    LogLine "[OK] PDF saved: $pdfPath"
-                } else {
-                    throw "PDF file not created"
-                }
-            } else {
-                # Fallback: open HTML and tell user to print as PDF
-                LogLine "[!] No Edge/Chrome found for headless PDF. Opening HTML for manual print..."
-                Start-Process $htmlPath
-                $savedFiles += $htmlPath
-            }
-        } catch {
-            LogLine ("[!] PDF generation failed: {0}. HTML saved instead." -f $_.Exception.Message)
-            $savedFiles += $htmlPath
-        }
-    }
+    [System.Windows.Forms.MessageBox]::Show(
+        "Deployment document saved:`n`n$([System.IO.Path]::GetFileName($htmlPath))`n`nLocation: $saveDir",
+        "Document Created",
+        "OK", "Information"
+    ) | Out-Null
     
-    if ($script:DocSaveChoice -eq "word" -or $script:DocSaveChoice -eq "both") {
-        $docxPath = Join-Path $saveDir "$safeFileName`_DeploymentDoc.docx"
-        try {
-            $word = New-Object -ComObject Word.Application
-            $word.Visible = $false
-            $doc = $word.Documents.Open($htmlPath)
-            $doc.SaveAs2([ref]$docxPath, [ref]16) # 16 = wdFormatDocumentDefault (.docx)
-            $doc.Close()
-            $word.Quit()
-            [System.Runtime.Interopservices.Marshal]::ReleaseComObject($word) | Out-Null
-            $savedFiles += $docxPath
-            LogLine "[OK] Word doc saved: $docxPath"
-        } catch {
-            LogLine ("[!] Word export failed: {0}. HTML saved as fallback." -f $_.Exception.Message)
-            if ($htmlPath -notin $savedFiles) { $savedFiles += $htmlPath }
-        }
-    }
-    
-    # Clean up HTML if we got the other formats
-    if ($savedFiles.Count -gt 0 -and $htmlPath -notin $savedFiles -and (Test-Path $htmlPath)) {
-        # Keep HTML as backup anyway
-    }
-    
-    if ($savedFiles.Count -gt 0) {
-        $fileList = ($savedFiles | ForEach-Object { [System.IO.Path]::GetFileName($_) }) -join "`n"
-        [System.Windows.Forms.MessageBox]::Show(
-            "Deployment document saved:`n`n$fileList`n`nLocation: $saveDir",
-            "Document Created",
-            "OK", "Information"
-        ) | Out-Null
-        
-        # Open the folder
-        Start-Process "explorer.exe" -ArgumentList "/select,`"$($savedFiles[0])`""
-    }
+    # Open the folder
+    Start-Process "explorer.exe" -ArgumentList "/select,`"$htmlPath`""
     
     LogLine "Deployment document generation complete."
 })
