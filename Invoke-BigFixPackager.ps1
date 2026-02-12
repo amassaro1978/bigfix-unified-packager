@@ -814,7 +814,7 @@ function Build-OfferXml {
 # =========================
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "BigFix Unified Packager v$ToolVer"
-$form.Size = New-Object System.Drawing.Size(920, 880)
+$form.Size = New-Object System.Drawing.Size(920, 1220)
 $form.StartPosition = "CenterScreen"
 $form.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#2D2D30")
 $form.ForeColor = [System.Drawing.Color]::White
