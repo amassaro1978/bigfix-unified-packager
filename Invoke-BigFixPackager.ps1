@@ -906,6 +906,25 @@ $tbAuthor = New-StyledTextBox 180 $y 300
 $tbAuthor.Text = $env:USERNAME
 $form.Controls.Add($tbAuthor)
 
+$y += 30
+Add-Label "Packaging KB Link:" 10 $y | Out-Null
+$tbKbLink = New-StyledTextBox 180 $y 300
+$tbKbLink.ForeColor = [System.Drawing.Color]::Gray
+$tbKbLink.Text = "(optional) ServiceNow KB article URL"
+$tbKbLink.Add_GotFocus({
+    if ($tbKbLink.Text -eq "(optional) ServiceNow KB article URL") {
+        $tbKbLink.Text = ""
+        $tbKbLink.ForeColor = [System.Drawing.SystemColors]::WindowText
+    }
+})
+$tbKbLink.Add_LostFocus({
+    if ([string]::IsNullOrWhiteSpace($tbKbLink.Text)) {
+        $tbKbLink.Text = "(optional) ServiceNow KB article URL"
+        $tbKbLink.ForeColor = [System.Drawing.Color]::Gray
+    }
+})
+$form.Controls.Add($tbKbLink)
+
 # --- Section: Icon ---
 $y += 40
 Add-Label "- Fixlet Icon (for Self Service) -" 10 $y -Bold | Out-Null
@@ -1494,7 +1513,8 @@ function Generate-DeploymentDocHtml {
         [string]$RemoveRelevance,
         [string]$InstallActionScript,
         [string]$UpdateActionScript,
-        [string]$RemoveActionScript
+        [string]$RemoveActionScript,
+        [string]$KbLink
     )
     
     $displayName = if ($Vendor) { "$Vendor $AppName" } else { $AppName }
@@ -1595,6 +1615,7 @@ function Generate-DeploymentDocHtml {
     <tr><td>BigFix Server</td><td>$([System.Web.HttpUtility]::HtmlEncode($Server))</td></tr>
     <tr><td>BigFix Site</td><td>$([System.Web.HttpUtility]::HtmlEncode($Site))</td></tr>
     <tr><td>Date Created</td><td>$dateGenerated</td></tr>
+    $(if ($KbLink) { "<tr><td>Packaging KB</td><td><a href='$([System.Web.HttpUtility]::HtmlEncode($KbLink))' style='color:#0078D4;'>$([System.Web.HttpUtility]::HtmlEncode($KbLink))</a></td></tr>" })
   </table>
 </div>
 
@@ -1700,7 +1721,8 @@ $btnCreateDoc.Add_Click({
         -PsadtFolder $psadtFolder -Server $server -Site $site `
         -IconDataUri $iconUri -FixletIds $script:PipelineFixletIds `
         -InstallRelevance $tbInstallRel.Text -UpdateRelevance $tbUpdateRel.Text -RemoveRelevance $tbRemoveRel.Text `
-        -InstallActionScript $installAS -UpdateActionScript $updateAS -RemoveActionScript $removeAS
+        -InstallActionScript $installAS -UpdateActionScript $updateAS -RemoveActionScript $removeAS `
+        -KbLink $(if ($tbKbLink.Text -ne "(optional) ServiceNow KB article URL" -and -not [string]::IsNullOrWhiteSpace($tbKbLink.Text)) { $tbKbLink.Text } else { "" })
     
     # Ask user for save format
     $formatForm = New-Object System.Windows.Forms.Form
