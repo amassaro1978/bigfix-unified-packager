@@ -814,7 +814,7 @@ function Build-OfferXml {
 # =========================
 $form = New-Object System.Windows.Forms.Form
 $form.Text = "BigFix Unified Packager v$ToolVer"
-$form.Size = New-Object System.Drawing.Size(920, 1220)
+$form.Size = New-Object System.Drawing.Size(940, 850)
 $form.StartPosition = "CenterScreen"
 $form.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#2D2D30")
 $form.ForeColor = [System.Drawing.Color]::White
@@ -1108,7 +1108,7 @@ $script:LogBox.Location = New-Object System.Drawing.Point(10, $y)
 $script:LogBox.Size = New-Object System.Drawing.Size(880, 130)
 $script:LogBox.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#1E1E1E")
 $script:LogBox.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#CCCCCC")
-$script:LogBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right -bor [System.Windows.Forms.AnchorStyles]::Bottom
+$script:LogBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
 $form.Controls.Add($script:LogBox)
 
 # Track generated script path
