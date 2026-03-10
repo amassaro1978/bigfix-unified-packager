@@ -724,11 +724,11 @@ function Build-FixletXml {
 <BES xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="BES.xsd">
   <Fixlet>
     <Title>$titleEsc</Title>
-    <Description>$(SafeEscape $Description)</Description>
+    <Description>$(SafeEscape $Description)</Description>$iconElement
     <Relevance><![CDATA[$relCdata]]></Relevance>
     <Category>$catEsc</Category>
     <Source>$(SafeEscape $Source)</Source>
-    <SourceSeverity>$sevEsc</SourceSeverity>$iconElement
+    <SourceSeverity>$sevEsc</SourceSeverity>
     <DefaultAction ID="Action1">
       <ActionScript MIMEType="application/x-Fixlet-Windows-Shell"><![CDATA[$actCdata]]></ActionScript>
     </DefaultAction>
@@ -749,7 +749,8 @@ function Build-OfferXml {
         [string]$GroupRelevance,
         [string]$Kind,
         [string]$Phase,
-        [string]$OfferDescription
+        [string]$OfferDescription,
+        [string]$IconBase64DataUri = ""
     )
     
     $siteEsc = SafeEscape $SiteName
@@ -769,6 +770,10 @@ function Build-OfferXml {
     $descRaw = if ([string]::IsNullOrWhiteSpace($OfferDescription)) { $descFallback } else { $OfferDescription }
     $descHtml = [System.Web.HttpUtility]::HtmlEncode($descRaw) -replace "`r?`n","<br/>"
     $offerCat = SafeEscape $cat
+    $offerIconElement = ""
+    if ($IconBase64DataUri) {
+        $offerIconElement = "`n    <MIMEField>`n      <Name>x-fixlet-icon</Name>`n      <Value>$IconBase64DataUri</Value>`n    </MIMEField>"
+    }
     
 @"
 <?xml version="1.0" encoding="UTF-8"?>
@@ -806,7 +811,7 @@ function Build-OfferXml {
       <OfferCategory>$offerCat</OfferCategory>
       <OfferDescriptionHTML><![CDATA[$descHtml]]></OfferDescriptionHTML>
     </Settings>
-    <Title>$offerTitle</Title>
+    <Title>$offerTitle</Title>$offerIconElement
   </SourcedFixletAction>
 </BES>
 "@
@@ -1408,11 +1413,14 @@ $btnPostAll.Add_Click({
         
         # Get icon base64 if available
         $iconDataUri = ""
+        LogLine ("DEBUG Icon path: '{0}'" -f $script:SelectedIconPath)
         if ($script:SelectedIconPath -and (Test-Path $script:SelectedIconPath)) {
             $iconInfo = Get-IconBase64 -IconPath $script:SelectedIconPath
             if ($iconInfo) {
                 $iconDataUri = $iconInfo.DataUri
-                LogLine ("Icon encoded: {0} ({1})" -f [System.IO.Path]::GetFileName($script:SelectedIconPath), $iconInfo.MimeType)
+                LogLine ("Icon for fixlet: {0} ({1}, {2} chars)" -f $script:SelectedIconPath, $iconInfo.MimeType, $iconDataUri.Length)
+            } else {
+                LogLine "[!] Icon file found but failed to encode to base64"
             }
         } else {
             LogLine "[!] No icon selected - fixlets will have no self-service icon"
@@ -1482,7 +1490,8 @@ $btnPostAll.Add_Click({
                 -GroupRelevance $groupRel `
                 -Kind $kinds[$i] `
                 -Phase "QA" `
-                -OfferDescription ""
+                -OfferDescription "" `
+                -IconBase64DataUri $iconDataUri
             
             try {
                 Post-Xml -Url $actionPostUrl -User $offerCreds.User -Pass $offerCreds.Pass -XmlBody $offerXml | Out-Null
