@@ -1148,24 +1148,10 @@ function Load-PsadtFolder {
         $script:InstallerFile = $info.InstallerFile
         LogLine ("Parsed: App={0}, Ver={1}, PSADT Exe={2}, Installer={3} ({4})" -f $info.AppName, $info.Version, $info.PsadtExeName, $info.InstallerType, $info.InstallerFile)
         
-        # Auto-detect icon files
-        $iconFiles = Find-IconFiles -FolderPath $FolderPath
-        $cbIcon.Items.Clear()
-        if ($iconFiles.Count -gt 0) {
-            $cbIcon.Tag = $iconFiles
-            foreach ($ic in $iconFiles) { $cbIcon.Items.Add($ic.Name) | Out-Null }
-            $cbIcon.SelectedIndex = 0
-            $script:SelectedIconPath = $iconFiles[0].FullName
-            $preview = Get-IconPreview -IconPath $iconFiles[0].FullName
-            if ($preview) { $picIcon.Image = $preview }
-            $lblIconStatus.Text = ("[OK] Using: {0}" -f $iconFiles[0].Name)
-            $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
-            LogLine ("Icon auto-detected: {0} (full path: {1})" -f $iconFiles[0].Name, $iconFiles[0].FullName)
-        } else {
-            $lblIconStatus.Text = "[!] No icon found - use Browse"
-            $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
-            LogLine "No icon files found in package - browse manually"
-        }
+        # Icon is never auto-picked from PSADT folder — user must select via Browse or dropdown
+        $lblIconStatus.Text = "[!] No icon selected - use Browse"
+        $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
+        LogLine "Icon must be selected manually via Browse button"
     } catch {
         LogLine ("Could not auto-parse: {0}" -f $_.Exception.Message)
     }
