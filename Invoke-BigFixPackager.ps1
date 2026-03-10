@@ -1157,12 +1157,21 @@ function Load-PsadtFolder {
     }
 }
 
-# Browse PSADT folder
+# Browse PSADT folder (uses OpenFileDialog trick for modern explorer with address bar)
 $btnBrowse.Add_Click({
-    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
-    $dlg.Description = "Select PSADT Package Folder"
+    # Use OpenFileDialog with a trick to select folders — shows modern explorer with address bar
+    $dlg = New-Object System.Windows.Forms.OpenFileDialog
+    $dlg.Title = "Select PSADT Package Folder (select any file inside, or type path)"
+    $dlg.Filter = "Folder Selection|*.---"
+    $dlg.CheckFileExists = $false
+    $dlg.CheckPathExists = $true
+    $dlg.FileName = "Select Folder"
+    $dlg.ValidateNames = $false
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        Load-PsadtFolder -FolderPath $dlg.SelectedPath
+        $path = [System.IO.Path]::GetDirectoryName($dlg.FileName)
+        if ($path) {
+            Load-PsadtFolder -FolderPath $path
+        }
     }
 })
 
