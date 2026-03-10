@@ -6,16 +6,16 @@
     opens ISE for review, signs the script, creates Install/Update/Remove fixlets,
     POSTs them to BigFix, then creates QA offers automatically.
 .AUTHOR
-    Anthony Massaro (generated with OpenClaw)
+    Anthony Massaro
 .VERSION
-    0.2.0
+    0.4.0
 #>
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Web
 
-$ToolVer = "0.3.0 - Unified Packager"
+$ToolVer = "0.4.0 - Unified Packager"
 
 # =========================
 # CONFIG (customize per environment)
