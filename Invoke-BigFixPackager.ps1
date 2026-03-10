@@ -1735,9 +1735,9 @@ $btnCreateDoc.Add_Click({
     # Save HTML directly — no format picker
     $saveDir = $env:TEMP
     if ($psadtFolder -ne "(no folder selected)" -and (Test-Path $psadtFolder)) {
-        $versionFolder = Split-Path (Split-Path $psadtFolder -Parent) -Parent
-        if ($versionFolder -and (Test-Path $versionFolder)) {
-            $saveDir = $versionFolder
+        $parentFolder = Split-Path $psadtFolder -Parent
+        if ($parentFolder -and (Test-Path $parentFolder)) {
+            $saveDir = $parentFolder
         } else {
             $saveDir = $psadtFolder
         }
