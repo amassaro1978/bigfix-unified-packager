@@ -149,15 +149,18 @@ function Build-GroupMembershipRelevance([string]$SiteName,[string]$GroupIdNumeri
 function Find-IconFiles([string]$FolderPath) {
     $filesFolder = Join-Path $FolderPath "Files"
     $icons = @()
+    # Check Files/ subfolder first (most likely location for app icon)
     if (Test-Path $filesFolder) {
-        $icons = Get-ChildItem -Path $filesFolder -File | Where-Object {
-            $_.Extension -match '^\.(png|jpg|jpeg|ico)$'
-        }
+        $icons = @(Get-ChildItem -Path $filesFolder -File | Where-Object {
+            $_.Extension -match '^\.(png|jpg|jpeg|ico)$' -and
+            $_.Name -notmatch '^(AppDeployToolkit|PSADT|Setup|Deploy-Application)'
+        })
     }
-    # Also check root folder
-    $icons += Get-ChildItem -Path $FolderPath -File | Where-Object {
-        $_.Extension -match '^\.(png|jpg|jpeg|ico)$'
-    }
+    # Also check root folder, excluding PSADT framework icons
+    $icons += @(Get-ChildItem -Path $FolderPath -File | Where-Object {
+        $_.Extension -match '^\.(png|jpg|jpeg|ico)$' -and
+        $_.Name -notmatch '^(AppDeployToolkit|PSADT|Setup|Deploy-Application)'
+    })
     return $icons
 }
 
@@ -1155,9 +1158,9 @@ function Load-PsadtFolder {
             $script:SelectedIconPath = $iconFiles[0].FullName
             $preview = Get-IconPreview -IconPath $iconFiles[0].FullName
             if ($preview) { $picIcon.Image = $preview }
-            $lblIconStatus.Text = ("[OK] {0} icon(s) found" -f $iconFiles.Count)
+            $lblIconStatus.Text = ("[OK] Using: {0}" -f $iconFiles[0].Name)
             $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
-            LogLine ("Icon auto-detected: {0}" -f $iconFiles[0].Name)
+            LogLine ("Icon auto-detected: {0} (full path: {1})" -f $iconFiles[0].Name, $iconFiles[0].FullName)
         } else {
             $lblIconStatus.Text = "[!] No icon found - use Browse"
             $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
