@@ -859,18 +859,17 @@ function Add-Label($text, $x, $y, [switch]$Bold) {
 $y = 10
 
 # --- Section: PSADT Package ---
+Add-Label "PSADT Folder:" 10 $y | Out-Null
+$tbPsadtPath = New-StyledTextBox 130 $y 430
+$tbPsadtPath.Text = ""
+$form.Controls.Add($tbPsadtPath)
+
 $btnBrowse = New-Object System.Windows.Forms.Button
-$btnBrowse.Text = "Browse PSADT Folder..."
-$btnBrowse.Size = New-Object System.Drawing.Size(200, 32)
-$btnBrowse.Location = New-Object System.Drawing.Point(10, $y)
+$btnBrowse.Text = "Browse..."
+$btnBrowse.Size = New-Object System.Drawing.Size(80, 25)
+$btnBrowse.Location = New-Object System.Drawing.Point(570, $y)
 Style-Button $btnBrowse
 $form.Controls.Add($btnBrowse)
-
-$lblPath = New-Object System.Windows.Forms.Label
-$lblPath.Text = "(no folder selected)"
-$lblPath.Location = New-Object System.Drawing.Point(220, ($y + 6))
-$lblPath.AutoSize = $true
-$form.Controls.Add($lblPath)
 
 $y += 45
 Add-Label "- Package Info -" 10 $y -Bold | Out-Null
@@ -1118,51 +1117,71 @@ $script:GeneratedScriptPath = $null
 # EVENT HANDLERS
 # =========================
 
+# Helper function to load PSADT folder and populate fields
+function Load-PsadtFolder {
+    param([string]$FolderPath)
+    $FolderPath = $FolderPath.Trim().TrimEnd('\')
+    if (-not $FolderPath) { return }
+    if (-not (Test-Path $FolderPath)) {
+        LogLine "Path not found: $FolderPath"
+        [System.Windows.Forms.MessageBox]::Show("Folder not found:`n$FolderPath", "Error", [System.Windows.Forms.MessageBoxButtons]::OK, [System.Windows.Forms.MessageBoxIcon]::Error)
+        return
+    }
+    $tbPsadtPath.Text = $FolderPath
+    LogLine "Selected folder: $FolderPath"
+    
+    try {
+        $info = Parse-PsadtFolder -FolderPath $FolderPath
+        if ($info.AppName) { $tbAppName.Text = $info.AppName }
+        if ($info.Version) { $tbPkgVersion.Text = $info.Version }
+        
+        # Default process name = exe name without extension
+        $defaultProc = if ($tbExeName.Text.Trim()) { 
+            [System.IO.Path]::GetFileNameWithoutExtension($tbExeName.Text.Trim()) 
+        } else { "" }
+        if ($defaultProc) { $tbProcesses.Text = $defaultProc }
+        
+        $script:InstallerType = $info.InstallerType
+        $script:InstallerFile = $info.InstallerFile
+        LogLine ("Parsed: App={0}, Ver={1}, PSADT Exe={2}, Installer={3} ({4})" -f $info.AppName, $info.Version, $info.PsadtExeName, $info.InstallerType, $info.InstallerFile)
+        
+        # Auto-detect icon files
+        $iconFiles = Find-IconFiles -FolderPath $FolderPath
+        $cbIcon.Items.Clear()
+        if ($iconFiles.Count -gt 0) {
+            $cbIcon.Tag = $iconFiles
+            foreach ($ic in $iconFiles) { $cbIcon.Items.Add($ic.Name) | Out-Null }
+            $cbIcon.SelectedIndex = 0
+            $script:SelectedIconPath = $iconFiles[0].FullName
+            $preview = Get-IconPreview -IconPath $iconFiles[0].FullName
+            if ($preview) { $picIcon.Image = $preview }
+            $lblIconStatus.Text = ("[OK] {0} icon(s) found" -f $iconFiles.Count)
+            $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
+            LogLine ("Icon auto-detected: {0}" -f $iconFiles[0].Name)
+        } else {
+            $lblIconStatus.Text = "[!] No icon found - use Browse"
+            $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
+            LogLine "No icon files found in package - browse manually"
+        }
+    } catch {
+        LogLine ("Could not auto-parse: {0}" -f $_.Exception.Message)
+    }
+}
+
 # Browse PSADT folder
 $btnBrowse.Add_Click({
     $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
     $dlg.Description = "Select PSADT Package Folder"
     if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $lblPath.Text = $dlg.SelectedPath
-        LogLine "Selected folder: $($dlg.SelectedPath)"
-        
-        try {
-            $info = Parse-PsadtFolder -FolderPath $dlg.SelectedPath
-            if ($info.AppName) { $tbAppName.Text = $info.AppName }
-            if ($info.Version) { $tbPkgVersion.Text = $info.Version }
-            # PsadtExeName now auto-derived from Vendor+AppName+Version
-            
-            # Default process name = exe name without extension
-            $defaultProc = if ($tbExeName.Text.Trim()) { 
-                [System.IO.Path]::GetFileNameWithoutExtension($tbExeName.Text.Trim()) 
-            } else { "" }
-            if ($defaultProc) { $tbProcesses.Text = $defaultProc }
-            
-            $script:InstallerType = $info.InstallerType
-            $script:InstallerFile = $info.InstallerFile
-            LogLine ("Parsed: App={0}, Ver={1}, PSADT Exe={2}, Installer={3} ({4})" -f $info.AppName, $info.Version, $info.PsadtExeName, $info.InstallerType, $info.InstallerFile)
-            
-            # Auto-detect icon files
-            $iconFiles = Find-IconFiles -FolderPath $dlg.SelectedPath
-            $cbIcon.Items.Clear()
-            if ($iconFiles.Count -gt 0) {
-                $cbIcon.Tag = $iconFiles
-                foreach ($ic in $iconFiles) { $cbIcon.Items.Add($ic.Name) | Out-Null }
-                $cbIcon.SelectedIndex = 0
-                $script:SelectedIconPath = $iconFiles[0].FullName
-                $preview = Get-IconPreview -IconPath $iconFiles[0].FullName
-                if ($preview) { $picIcon.Image = $preview }
-                $lblIconStatus.Text = ("[OK] {0} icon(s) found" -f $iconFiles.Count)
-                $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
-                LogLine ("Icon auto-detected: {0}" -f $iconFiles[0].Name)
-            } else {
-                $lblIconStatus.Text = "[!] No icon found - use Browse"
-                $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
-                LogLine "No icon files found in package - browse manually"
-            }
-        } catch {
-            LogLine ("Could not auto-parse: {0}" -f $_.Exception.Message)
-        }
+        Load-PsadtFolder -FolderPath $dlg.SelectedPath
+    }
+})
+
+# Allow pressing Enter in the path textbox to load
+$tbPsadtPath.Add_KeyDown({
+    if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+        Load-PsadtFolder -FolderPath $tbPsadtPath.Text
+        $_.SuppressKeyPress = $true
     }
 })
 
@@ -1216,7 +1235,7 @@ $btnGenScript.Add_Click({
     $shortcut = $tbShortcut.Text.Trim()
     
     # Determine output path
-    $psadtFolder = $lblPath.Text
+    $psadtFolder = $tbPsadtPath.Text
     if ($psadtFolder -eq "(no folder selected)") {
         $psadtFolder = $env:TEMP
     }
@@ -1699,7 +1718,7 @@ $btnCreateDoc.Add_Click({
     $appName  = $tbAppName.Text.Trim()
     $version  = if ($tbFileVersion.Text.Trim()) { $tbFileVersion.Text.Trim() } else { $tbPkgVersion.Text.Trim() }
     $author   = $tbAuthor.Text.Trim()
-    $psadtFolder = $lblPath.Text
+    $psadtFolder = $tbPsadtPath.Text
     $server   = $cbServer.SelectedItem
     $site     = $cbSite.SelectedItem
     $displayName = if ($vendor) { "$vendor $appName" } else { $appName }
