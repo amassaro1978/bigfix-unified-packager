@@ -422,13 +422,13 @@ function Generate-DeployScript {
     # Install MSI
     `$msiPath = Join-Path `$adtSession.DirFiles '$InstallerFile'
     Write-ADTLogEntry -Message "Installing `$msiPath" -Source `$adtSession.InstallPhase
-    Start-ADTMsiProcess -Action Install -Path `$msiPath -Parameters 'ALLUSERS=1 REBOOT=ReallySuppress /QN'
+    Start-ADTMsiProcess -Action Install -FilePath `$msiPath -ArgumentList 'ALLUSERS=1 REBOOT=ReallySuppress /QN'
 "@
         $uninstallBlock = @"
     # Uninstall MSI
     `$msiPath = Join-Path `$adtSession.DirFiles '$InstallerFile'
     Write-ADTLogEntry -Message "Uninstalling `$msiPath" -Source `$adtSession.InstallPhase
-    Start-ADTMsiProcess -Action Uninstall -Path `$msiPath -Parameters 'REBOOT=ReallySuppress /QN'
+    Start-ADTMsiProcess -Action Uninstall -FilePath `$msiPath -ArgumentList 'REBOOT=ReallySuppress /QN'
 "@
     } elseif ($InstallerType -eq "EXE" -and $InstallerFile) {
         $installBlock = @"
