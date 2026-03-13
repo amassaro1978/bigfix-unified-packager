@@ -716,7 +716,8 @@ function Build-FixletXml {
     # Build icon element if provided
     $iconElement = ""
     if ($IconBase64DataUri) {
-        $iconElement = "`n    <MIMEField>`n      <Name>x-fixlet-icon</Name>`n      <Value>$IconBase64DataUri</Value>`n    </MIMEField>"
+        $iconJson = "{`"icon`":`"$IconBase64DataUri`"}"
+        $iconElement = "`n    <MIMEField>`n      <Name>action-ui-metadata</Name>`n      <Value>$iconJson</Value>`n    </MIMEField>"
     }
     
 @"
@@ -772,7 +773,8 @@ function Build-OfferXml {
     $offerCat = SafeEscape $cat
     $offerIconElement = ""
     if ($IconBase64DataUri) {
-        $offerIconElement = "`n    <MIMEField>`n      <Name>x-fixlet-icon</Name>`n      <Value>$IconBase64DataUri</Value>`n    </MIMEField>"
+        $offerIconJson = "{`"icon`":`"$IconBase64DataUri`"}"
+        $offerIconElement = "`n    <MIMEField>`n      <Name>action-ui-metadata</Name>`n      <Value>$offerIconJson</Value>`n    </MIMEField>"
     }
     
 @"
