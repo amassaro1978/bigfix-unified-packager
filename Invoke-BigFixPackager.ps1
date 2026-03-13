@@ -724,11 +724,11 @@ function Build-FixletXml {
 <BES xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:noNamespaceSchemaLocation="BES.xsd">
   <Fixlet>
     <Title>$titleEsc</Title>
-    <Description>$(SafeEscape $Description)</Description>$iconElement
+    <Description>$(SafeEscape $Description)</Description>
     <Relevance><![CDATA[$relCdata]]></Relevance>
     <Category>$catEsc</Category>
     <Source>$(SafeEscape $Source)</Source>
-    <SourceSeverity>$sevEsc</SourceSeverity>
+    <SourceSeverity>$sevEsc</SourceSeverity>$iconElement
     <DefaultAction ID="Action1">
       <ActionScript MIMEType="application/x-Fixlet-Windows-Shell"><![CDATA[$actCdata]]></ActionScript>
     </DefaultAction>
