@@ -1153,24 +1153,11 @@ function Load-PsadtFolder {
         $script:InstallerFile = $info.InstallerFile
         LogLine ("Parsed: App={0}, Ver={1}, PSADT Exe={2}, Installer={3} ({4})" -f $info.AppName, $info.Version, $info.PsadtExeName, $info.InstallerType, $info.InstallerFile)
         
-        # Auto-detect icons in PSADT folder
-        $iconFiles = Find-IconFiles -FolderPath $FolderPath
-        if ($iconFiles -and $iconFiles.Count -gt 0) {
-            $cbIcon.Items.Clear()
-            $cbIcon.Tag = $iconFiles
-            foreach ($icoFile in $iconFiles) { $cbIcon.Items.Add($icoFile.Name) }
-            $cbIcon.SelectedIndex = 0
-            $script:SelectedIconPath = $iconFiles[0].FullName
-            $preview = Get-IconPreview -IconPath $iconFiles[0].FullName
-            if ($preview) { $picIcon.Image = $preview }
-            $lblIconStatus.Text = "[OK] Icon auto-detected"
-            $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
-            LogLine ("Icon auto-detected: {0}" -f $iconFiles[0].FullName)
-        } else {
-            $lblIconStatus.Text = "[!] No icon found - use Browse"
-            $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
-            LogLine "No icon files found in PSADT folder - use Browse to select"
-        }
+        # Icon is NOT auto-picked from PSADT folder — user must select the self-service icon via Browse
+        # DO NOT call Find-IconFiles here — Files/ folder contains installer icons, not the self-service icon
+        $lblIconStatus.Text = "[!] No icon selected - use Browse"
+        $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
+        LogLine "Icon must be selected manually via Browse button (self-service icon, not installer icon)"
     } catch {
         LogLine ("Could not auto-parse: {0}" -f $_.Exception.Message)
     }
