@@ -1153,10 +1153,24 @@ function Load-PsadtFolder {
         $script:InstallerFile = $info.InstallerFile
         LogLine ("Parsed: App={0}, Ver={1}, PSADT Exe={2}, Installer={3} ({4})" -f $info.AppName, $info.Version, $info.PsadtExeName, $info.InstallerType, $info.InstallerFile)
         
-        # Icon is never auto-picked from PSADT folder — user must select via Browse or dropdown
-        $lblIconStatus.Text = "[!] No icon selected - use Browse"
-        $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
-        LogLine "Icon must be selected manually via Browse button"
+        # Auto-detect icons in PSADT folder
+        $iconFiles = Find-IconFiles -FolderPath $FolderPath
+        if ($iconFiles -and $iconFiles.Count -gt 0) {
+            $cbIcon.Items.Clear()
+            $cbIcon.Tag = $iconFiles
+            foreach ($icoFile in $iconFiles) { $cbIcon.Items.Add($icoFile.Name) }
+            $cbIcon.SelectedIndex = 0
+            $script:SelectedIconPath = $iconFiles[0].FullName
+            $preview = Get-IconPreview -IconPath $iconFiles[0].FullName
+            if ($preview) { $picIcon.Image = $preview }
+            $lblIconStatus.Text = "[OK] Icon auto-detected"
+            $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
+            LogLine ("Icon auto-detected: {0}" -f $iconFiles[0].FullName)
+        } else {
+            $lblIconStatus.Text = "[!] No icon found - use Browse"
+            $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
+            LogLine "No icon files found in PSADT folder - use Browse to select"
+        }
     } catch {
         LogLine ("Could not auto-parse: {0}" -f $_.Exception.Message)
     }
@@ -1439,7 +1453,40 @@ $btnPostAll.Add_Click({
             LogLine ("Creating fixlet: {0}" -f $fx.Title)
             $xml = Build-FixletXml -Title $fx.Title -Description $fx.Description -Relevance $fx.Relevance -ActionScript $fx.ActionScript -Category $fx.Category -Source $fx.Source -IconBase64DataUri $iconDataUri
             
-            $resp = Post-Xml -Url $fixletPostUrl -User $fixletCreds.User -Pass $fixletCreds.Pass -XmlBody $xml
+            $posted = $false
+            $retries = 0
+            while (-not $posted -and $retries -lt 3) {
+                try {
+                    $resp = Post-Xml -Url $fixletPostUrl -User $fixletCreds.User -Pass $fixletCreds.Pass -XmlBody $xml
+                    $posted = $true
+                } catch {
+                    $errMsg = $_.Exception.Message
+                    $statusMatch = [regex]::Match($errMsg, '\((\d{3})\)')
+                    $httpCode = if ($statusMatch.Success) { $statusMatch.Groups[1].Value } else { "unknown" }
+                    LogLine ("[ERROR] POST failed: HTTP $httpCode - $errMsg")
+                    
+                    if ($httpCode -eq "401" -or $errMsg -match "401|Unauthorized") {
+                        LogLine "[!] Authentication failed - please re-enter credentials"
+                        $fixletCreds = Show-CredentialDialog -Title "Fixlet Credentials (Retry)" -Message "Authentication failed (401). Please re-enter your credentials:"
+                        if (-not $fixletCreds) {
+                            LogLine "[ABORT] No credentials provided. Pipeline stopped."
+                            return
+                        }
+                        $retries++
+                    } elseif ($httpCode -eq "400") {
+                        LogLine "[ERROR] Bad Request (400) - possible malformed XML. Check log for details."
+                        LogLine ("XML length: {0} chars" -f $xml.Length)
+                        return
+                    } else {
+                        LogLine "[ERROR] Unexpected error - pipeline stopped."
+                        return
+                    }
+                }
+            }
+            if (-not $posted) {
+                LogLine "[ABORT] Failed after 3 credential attempts. Pipeline stopped."
+                return
+            }
             
             # Parse fixlet ID from response
             $fixletId = $null
@@ -1493,11 +1540,29 @@ $btnPostAll.Add_Click({
                 -OfferDescription "" `
                 -IconBase64DataUri $iconDataUri
             
-            try {
-                Post-Xml -Url $actionPostUrl -User $offerCreds.User -Pass $offerCreds.Pass -XmlBody $offerXml | Out-Null
-                LogLine ("[OK] QA Offer created: {0}" -f $kinds[$i])
-            } catch {
-                LogLine ("[X] QA Offer failed for {0}: {1}" -f $kinds[$i], $_.Exception.Message)
+            $offerPosted = $false
+            $offerRetries = 0
+            while (-not $offerPosted -and $offerRetries -lt 3) {
+                try {
+                    Post-Xml -Url $actionPostUrl -User $offerCreds.User -Pass $offerCreds.Pass -XmlBody $offerXml | Out-Null
+                    LogLine ("[OK] QA Offer created: {0}" -f $kinds[$i])
+                    $offerPosted = $true
+                } catch {
+                    $errMsg = $_.Exception.Message
+                    LogLine ("[ERROR] QA Offer failed for {0}: {1}" -f $kinds[$i], $errMsg)
+                    if ($errMsg -match "401|Unauthorized") {
+                        LogLine "[!] Authentication failed for offers - please re-enter credentials"
+                        $offerCreds = Show-CredentialDialog -Title "Offer Credentials (Retry)" -Message "Authentication failed (401). Please re-enter your offer credentials:"
+                        if (-not $offerCreds) {
+                            LogLine "[ABORT] No credentials provided. Remaining offers skipped."
+                            break
+                        }
+                        $offerRetries++
+                    } else {
+                        LogLine "[ERROR] Non-auth error - skipping this offer."
+                        break
+                    }
+                }
             }
         }
         
