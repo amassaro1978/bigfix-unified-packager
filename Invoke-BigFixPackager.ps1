@@ -773,8 +773,7 @@ function Build-OfferXml {
     $offerCat = SafeEscape $cat
     $offerIconElement = ""
     if ($IconBase64DataUri) {
-        $offerIconJson = "{`"icon`":`"$IconBase64DataUri`"}"
-        $offerIconElement = "`n    <MIMEField>`n      <Name>action-ui-metadata</Name>`n      <Value>$offerIconJson</Value>`n    </MIMEField>"
+        $offerIconElement = ""
     }
     
 @"
