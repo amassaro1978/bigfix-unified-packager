@@ -789,7 +789,7 @@ function Build-OfferXml {
       <CustomRelevance><![CDATA[$groupSafe]]></CustomRelevance>
     </Target>
     <Settings>
-      <ActionUITitle>$(SafeEscape $DisplayName)</ActionUITitle>
+      <ActionUITitle>$(if ($cat -in 'Update','Remove') { SafeEscape ("{0}: {1}" -f $cat, $DisplayName) } else { SafeEscape $DisplayName })</ActionUITitle>
       <PreActionShowUI>$(To-XmlBool $OfferDefaults.PreActionShowUI)</PreActionShowUI>
       <HasRunningMessage>true</HasRunningMessage>
       <RunningMessage><Text>$runningMsg</Text></RunningMessage>
