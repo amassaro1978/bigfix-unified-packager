@@ -65,7 +65,7 @@ $LLMConfig = @{
     ApiKeyEnv  = "LITELLM_KEY"
     Model      = "gpt-40"
     # AI Relevance uses Sonnet 4.5 via the same LiteLLM proxy
-    AIRelModel = "claude-sonnet-4-5-20250514"
+    AIRelModel = "claude-sonnet-4-5"
 }
 
 # HTTP settings
