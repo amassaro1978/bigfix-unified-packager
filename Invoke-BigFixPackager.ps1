@@ -64,8 +64,6 @@ $LLMConfig = @{
     ApiUrl     = "https://redacted/v1/chat/completions"
     ApiKeyEnv  = "LITELLM_KEY"
     Model      = "gpt-40"
-    # AI Relevance uses Sonnet 4.5 via the same LiteLLM proxy
-    AIRelModel = "claude-sonnet-4-5"
 }
 
 # HTTP settings
@@ -1055,17 +1053,6 @@ $btnGenRel.Location = New-Object System.Drawing.Point(10, $y)
 Style-Button $btnGenRel
 $form.Controls.Add($btnGenRel)
 
-$btnAIRel = New-Object System.Windows.Forms.Button
-$btnAIRel.Text = "🤖 AI Generate Relevance"
-$btnAIRel.Size = New-Object System.Drawing.Size(200, 28)
-$btnAIRel.Location = New-Object System.Drawing.Point(200, $y)
-$btnAIRel.FlatStyle = "Flat"
-$btnAIRel.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#6B21A8")
-$btnAIRel.ForeColor = [System.Drawing.Color]::White
-$btnAIRel.FlatAppearance.BorderSize = 0
-$btnAIRel.Font = New-Object System.Drawing.Font("Segoe UI", 9, [System.Drawing.FontStyle]::Bold)
-$form.Controls.Add($btnAIRel)
-
 $y += 35
 Add-Label "Install:" 10 $y | Out-Null
 $tbInstallRel = New-StyledTextBox 80 $y 800 30 $true
@@ -1229,114 +1216,6 @@ $btnGenRel.Add_Click({
     $tbRemoveRel.Text  = "(exists regapp `"$exe`" whose (version of it = `"$ver`" as version))"
     
     LogLine "Relevance generated for $exe v$ver"
-})
-
-# AI Generate Relevance via LLM
-$btnAIRel.Add_Click({
-    $exe = $tbExeName.Text.Trim()
-    $ver = if ($tbFileVersion.Text.Trim()) { $tbFileVersion.Text.Trim() } else { $tbPkgVersion.Text.Trim() }
-    $appName = $tbAppName.Text.Trim()
-    $vendor = $tbVendor.Text.Trim()
-    
-    if (-not $exe -or -not $ver) {
-        [System.Windows.Forms.MessageBox]::Show("Enter Exe Name and Version first.", "Missing Info", "OK", "Warning") | Out-Null
-        return
-    }
-    
-    $apiKey = [Environment]::GetEnvironmentVariable($LLMConfig.ApiKeyEnv)
-    if (-not $apiKey) {
-        [System.Windows.Forms.MessageBox]::Show("LLM API key not found in env var '$($LLMConfig.ApiKeyEnv)'.`nSet it and restart.", "API Key Missing", "OK", "Error") | Out-Null
-        return
-    }
-    
-    LogLine "Calling AI to generate relevance for $appName ($exe v$ver)..."
-    $btnAIRel.Enabled = $false
-    $btnAIRel.Text = "⏳ Generating..."
-    
-    try {
-        $installerType = if ($script:InstallerType) { $script:InstallerType } else { "unknown" }
-        $installerFile = if ($script:InstallerFile) { $script:InstallerFile } else { "unknown" }
-        
-        $systemPrompt = @"
-You are a BigFix relevance expert. Generate precise BigFix relevance statements for software detection.
-Return ONLY a JSON object with three keys: install, update, remove. Each value is a single-line BigFix relevance string.
-Do NOT include any explanation, markdown, or code blocks — just the raw JSON.
-
-Rules for generating relevance:
-- Use multiple detection methods when possible (regapp, registry keys, file version checks)
-- For registry detection, check both HKLM\SOFTWARE and HKLM\SOFTWARE\WOW6432Node for x64 compatibility
-- Use "exists key" for registry, "exists file" for file system, "exists regapp" for registered applications
-- Version comparisons use "as version" for proper semver handling
-- For Install: app should NOT exist (or old version exists that needs fresh install)
-- For Update: app exists but version is less than target
-- For Remove: app exists at target version (confirms it was installed)
-- Combine conditions with AND/OR as appropriate
-- Prefer registry Uninstall key detection over regapp when the app name is known
-"@
-        
-        $userPrompt = @"
-Generate BigFix relevance for:
-- Application: $appName
-- Vendor: $vendor
-- Executable: $exe
-- Target Version: $ver
-- Installer Type: $installerType
-- Installer File: $installerFile
-
-Return JSON: {"install":"...","update":"...","remove":"..."}
-"@
-
-        $body = @{
-            model = $LLMConfig.AIRelModel
-            max_tokens = 1000
-            messages = @(
-                @{ role = "system"; content = $systemPrompt }
-                @{ role = "user"; content = $userPrompt }
-            )
-        } | ConvertTo-Json -Depth 5
-        
-        $headers = @{
-            "Authorization" = "Bearer $apiKey"
-            "Content-Type" = "application/json"
-        }
-        
-        if ($IgnoreCertErrors) {
-            [System.Net.ServicePointManager]::ServerCertificateValidationCallback = { $true }
-        }
-        
-        $response = Invoke-RestMethod -Uri $LLMConfig.ApiUrl -Method POST -Headers $headers -Body $body -TimeoutSec 30
-        
-        $content = $response.choices[0].message.content
-        
-        # Parse the JSON response
-        # Strip markdown code blocks if present
-        $content = $content -replace '```json\s*', '' -replace '```\s*', '' -replace '^\s+', '' -replace '\s+$', ''
-        
-        $parsed = $content | ConvertFrom-Json
-        
-        if ($parsed.install) { $tbInstallRel.Text = $parsed.install }
-        if ($parsed.update) { $tbUpdateRel.Text = $parsed.update }
-        if ($parsed.remove) { $tbRemoveRel.Text = $parsed.remove }
-        
-        LogLine "AI relevance generated successfully for $appName v$ver"
-        LogLine "  Install: $($parsed.install.Substring(0, [Math]::Min(80, $parsed.install.Length)))..."
-        LogLine "  Update:  $($parsed.update.Substring(0, [Math]::Min(80, $parsed.update.Length)))..."
-        LogLine "  Remove:  $($parsed.remove.Substring(0, [Math]::Min(80, $parsed.remove.Length)))..."
-        
-    } catch {
-        $errMsg = $_.Exception.Message
-        LogLine "AI relevance generation failed: $errMsg"
-        [System.Windows.Forms.MessageBox]::Show("AI generation failed:`n$errMsg`n`nFalling back to basic relevance.", "AI Error", "OK", "Warning") | Out-Null
-        
-        # Fallback to basic relevance
-        $tbInstallRel.Text = "(not exists regapp `"$exe`")"
-        $tbUpdateRel.Text  = "(exists regapp `"$exe`" whose (version of it < `"$ver`" as version))"
-        $tbRemoveRel.Text  = "(exists regapp `"$exe`" whose (version of it = `"$ver`" as version))"
-        LogLine "Fell back to basic regapp relevance"
-    } finally {
-        $btnAIRel.Enabled = $true
-        $btnAIRel.Text = "🤖 AI Generate Relevance"
-    }
 })
 
 # Generate PSADT Script + Open ISE
