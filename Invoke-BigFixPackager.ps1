@@ -8,14 +8,14 @@
 .AUTHOR
     Anthony Massaro
 .VERSION
-    0.5.1
+    1.0
 #>
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Web
 
-$ToolVer = "0.5.1 - Unified Packager"
+$ToolVer = "1.0 - Unified Packager"
 
 # =========================
 # CONFIG (customize per environment)
