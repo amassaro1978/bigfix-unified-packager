@@ -8,19 +8,23 @@
 .AUTHOR
     Anthony Massaro
 .VERSION
-    0.4.0
+    0.5.0
 #>
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Web
 
-$ToolVer = "0.4.0 - Unified Packager"
+$ToolVer = "0.5.0 - Unified Packager"
 
 # =========================
 # CONFIG (customize per environment)
 # =========================
 $LogFile = "C:\temp\BigFixPackager.log"
+
+# PSADT recipe library. Replace this with a trusted UNC path, for example:
+# $RecipeSharePath = "\\server\software\PSADT-Recipes"
+$RecipeSharePath = Join-Path $PSScriptRoot "Recipes"
 
 # Code Signing - update with your cert thumbprint
 $SigningCertThumbprint = "YOUR-CERT-THUMBPRINT-HERE"
@@ -367,6 +371,224 @@ function Parse-PsadtFolder {
 }
 
 # =========================
+# PSADT RECIPE HELPERS
+# =========================
+$RecipeSectionNames = @(
+    "PreInstall",
+    "Install",
+    "PostInstall",
+    "PreUninstall",
+    "Uninstall",
+    "PostUninstall"
+)
+$SupportedRecipeTokens = @(
+    "{{Vendor}}",
+    "{{AppName}}",
+    "{{AppVersion}}",
+    "{{InstallerType}}",
+    "{{InstallerFile}}",
+    "{{FilesDirectory}}"
+)
+
+function Import-PsadtRecipe {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Recipe file not found: $Path"
+    }
+
+    try {
+        $recipe = Import-PowerShellDataFile -LiteralPath $Path -ErrorAction Stop
+    } catch {
+        throw "Could not read recipe '$Path': $($_.Exception.Message)"
+    }
+
+    if (-not $recipe) { throw "Recipe '$Path' is empty." }
+    if ([string]$recipe.SchemaVersion -ne "1.0") {
+        throw "Recipe '$Path' uses unsupported SchemaVersion '$($recipe.SchemaVersion)'. Expected 1.0."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$recipe.Name)) {
+        throw "Recipe '$Path' is missing Name."
+    }
+    if (-not $recipe.Sections -or -not ($recipe.Sections -is [System.Collections.IDictionary])) {
+        throw "Recipe '$Path' must contain a Sections hashtable."
+    }
+
+    foreach ($sectionName in $recipe.Sections.Keys) {
+        if ($RecipeSectionNames -notcontains [string]$sectionName) {
+            throw "Recipe '$Path' contains unknown section '$sectionName'."
+        }
+        $sectionValue = $recipe.Sections[$sectionName]
+        if ($null -ne $sectionValue -and -not ($sectionValue -is [string])) {
+            throw "Recipe section '$sectionName' in '$Path' must be a string."
+        }
+        if (-not [string]::IsNullOrWhiteSpace([string]$sectionValue)) {
+            $unknownTokens = [regex]::Matches([string]$sectionValue, '\{\{[^{}]+\}\}') |
+                ForEach-Object { $_.Value } |
+                Where-Object { $SupportedRecipeTokens -notcontains $_ } |
+                Select-Object -Unique
+            if ($unknownTokens) {
+                throw "Recipe section '$sectionName' contains unknown token(s): $($unknownTokens -join ', ')"
+            }
+
+            # Validate syntax while loading the dropdown. Substitute harmless
+            # sample values because the actual package metadata is not known yet.
+            $syntaxSample = [string]$sectionValue
+            foreach ($token in $SupportedRecipeTokens) {
+                $sampleValue = if ($token -eq "{{FilesDirectory}}") {
+                    '$adtSession.DirFiles'
+                } else {
+                    "RecipeValidationValue"
+                }
+                $syntaxSample = $syntaxSample.Replace($token, $sampleValue)
+            }
+            $parseTokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput(
+                $syntaxSample,
+                [ref]$parseTokens,
+                [ref]$parseErrors
+            )
+            if ($parseErrors.Count -gt 0) {
+                $messages = $parseErrors | ForEach-Object { $_.Message } | Select-Object -Unique
+                throw "Recipe section '$sectionName' has invalid PowerShell: $($messages -join '; ')"
+            }
+        }
+    }
+
+    $recipe["_SourcePath"] = (Resolve-Path -LiteralPath $Path).Path
+    $recipe["_Sha256"] = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    return $recipe
+}
+
+function Expand-PsadtRecipeTokens {
+    param(
+        [AllowEmptyString()][string]$Text,
+        [string]$Vendor,
+        [string]$AppName,
+        [string]$AppVersion,
+        [string]$InstallerType,
+        [string]$InstallerFile
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
+
+    $tokens = [ordered]@{
+        "{{Vendor}}"         = $Vendor
+        "{{AppName}}"        = $AppName
+        "{{AppVersion}}"     = $AppVersion
+        "{{InstallerType}}"  = $InstallerType
+        "{{InstallerFile}}"  = $InstallerFile
+        "{{FilesDirectory}}" = '$adtSession.DirFiles'
+    }
+
+    $expanded = $Text
+    foreach ($token in $tokens.Keys) {
+        if ($expanded.Contains($token) -and [string]::IsNullOrWhiteSpace([string]$tokens[$token])) {
+            throw "Recipe token '$token' requires a value, but the package field is blank."
+        }
+        $expanded = $expanded.Replace($token, [string]$tokens[$token])
+    }
+
+    $unresolved = [regex]::Matches($expanded, '\{\{[^{}]+\}\}') |
+        ForEach-Object { $_.Value } |
+        Select-Object -Unique
+    if ($unresolved) {
+        throw "Unknown recipe token(s): $($unresolved -join ', ')"
+    }
+
+    return $expanded.Trim()
+}
+
+function Resolve-PsadtRecipeSections {
+    param(
+        [System.Collections.IDictionary]$Recipe,
+        [string]$Vendor,
+        [string]$AppName,
+        [string]$AppVersion,
+        [string]$InstallerType,
+        [string]$InstallerFile
+    )
+
+    $resolved = @{}
+    foreach ($sectionName in $RecipeSectionNames) {
+        $raw = if ($Recipe.Sections.Contains($sectionName)) {
+            [string]$Recipe.Sections[$sectionName]
+        } else {
+            ""
+        }
+
+        $expanded = Expand-PsadtRecipeTokens `
+            -Text $raw `
+            -Vendor $Vendor `
+            -AppName $AppName `
+            -AppVersion $AppVersion `
+            -InstallerType $InstallerType `
+            -InstallerFile $InstallerFile
+
+        if (-not [string]::IsNullOrWhiteSpace($expanded)) {
+            $parseTokens = $null
+            $parseErrors = $null
+            [void][System.Management.Automation.Language.Parser]::ParseInput(
+                $expanded,
+                [ref]$parseTokens,
+                [ref]$parseErrors
+            )
+            if ($parseErrors.Count -gt 0) {
+                $messages = $parseErrors | ForEach-Object { $_.Message } | Select-Object -Unique
+                throw "Recipe section '$sectionName' has invalid PowerShell: $($messages -join '; ')"
+            }
+        }
+
+        $resolved[$sectionName] = $expanded
+    }
+
+    return $resolved
+}
+
+function Format-PsadtRecipeBlock {
+    param(
+        [AllowEmptyString()][string]$Text,
+        [string]$SectionName,
+        [string]$RecipeName
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Text)) { return "" }
+
+    return @"
+
+    # Recipe: $RecipeName [$SectionName]
+$($Text.Trim())
+    # End Recipe: $RecipeName [$SectionName]
+"@
+}
+
+function Save-PsadtRecipeSnapshot {
+    param(
+        [System.Collections.IDictionary]$Recipe,
+        [Parameter(Mandatory = $true)][string]$PackageFolder
+    )
+
+    if (-not $Recipe -or -not $Recipe["_SourcePath"]) { return $null }
+
+    $snapshotFolder = Join-Path $PackageFolder "SupportFiles\RecipeSnapshots"
+    if (-not (Test-Path -LiteralPath $snapshotFolder)) {
+        New-Item -ItemType Directory -Path $snapshotFolder -Force | Out-Null
+    }
+
+    $safeName = ([string]$Recipe.Name -replace '[^\w\-.]', '_').Trim([char]'_')
+    if (-not $safeName) { $safeName = "PSADT-Recipe" }
+    $recipeVersion = if ($Recipe.RecipeVersion) {
+        "-" + ([string]$Recipe.RecipeVersion -replace '[^\w\-.]', '_')
+    } else {
+        ""
+    }
+    $snapshotPath = Join-Path $snapshotFolder "$safeName$recipeVersion.psd1"
+    Copy-Item -LiteralPath $Recipe["_SourcePath"] -Destination $snapshotPath -Force
+    return $snapshotPath
+}
+
+# =========================
 # PSADT SCRIPT GENERATOR (4.x)
 # =========================
 function Generate-DeployScript {
@@ -379,7 +601,8 @@ function Generate-DeployScript {
         [string]$Author,
         [string]$OutputPath,
         [string]$InstallerType = "",
-        [string]$InstallerFile = ""
+        [string]$InstallerFile = "",
+        [System.Collections.IDictionary]$Recipe
     )
     
     # Build process list string for the template
@@ -444,6 +667,56 @@ function Generate-DeployScript {
     ## Start-ADTProcess -FilePath 'UNINSTALL_PATH_HERE' -ArgumentList '/S /v/qn' -WaitForMsiExec
 "@
     }
+
+    $recipeName = ""
+    $recipeVersion = ""
+    $recipeProvenance = ""
+    $preInstallRecipeBlock = ""
+    $postInstallRecipeBlock = ""
+    $preUninstallRecipeBlock = ""
+    $postUninstallRecipeBlock = ""
+
+    if ($Recipe) {
+        $recipeName = [string]$Recipe.Name
+        $recipeVersion = [string]$Recipe.RecipeVersion
+        $recipeSections = Resolve-PsadtRecipeSections `
+            -Recipe $Recipe `
+            -Vendor $Vendor `
+            -AppName $AppName `
+            -AppVersion $AppVersion `
+            -InstallerType $InstallerType `
+            -InstallerFile $InstallerFile
+
+        $preInstallRecipeBlock = Format-PsadtRecipeBlock `
+            -Text $recipeSections.PreInstall -SectionName "Pre-Install" -RecipeName $recipeName
+        $postInstallRecipeBlock = Format-PsadtRecipeBlock `
+            -Text $recipeSections.PostInstall -SectionName "Post-Install" -RecipeName $recipeName
+        $preUninstallRecipeBlock = Format-PsadtRecipeBlock `
+            -Text $recipeSections.PreUninstall -SectionName "Pre-Uninstall" -RecipeName $recipeName
+        $postUninstallRecipeBlock = Format-PsadtRecipeBlock `
+            -Text $recipeSections.PostUninstall -SectionName "Post-Uninstall" -RecipeName $recipeName
+
+        # Recipe Install/Uninstall blocks replace the automatic command so the
+        # application is never installed or uninstalled twice.
+        if (-not [string]::IsNullOrWhiteSpace($recipeSections.Install)) {
+            $installBlock = Format-PsadtRecipeBlock `
+                -Text $recipeSections.Install `
+                -SectionName "Install (replaces automatic command)" `
+                -RecipeName $recipeName
+        }
+        if (-not [string]::IsNullOrWhiteSpace($recipeSections.Uninstall)) {
+            $uninstallBlock = Format-PsadtRecipeBlock `
+                -Text $recipeSections.Uninstall `
+                -SectionName "Uninstall (replaces automatic command)" `
+                -RecipeName $recipeName
+        }
+
+        $recipeProvenance = @"
+	- PSADT recipe: $recipeName$(if ($recipeVersion) { " v$recipeVersion" })
+	- Recipe source: $($Recipe["_SourcePath"])
+	- Recipe SHA-256: $($Recipe["_Sha256"])
+"@
+    }
     
     $scriptDate = Get-Date -Format 'yyyy-MM-dd'
     
@@ -455,6 +728,7 @@ function Generate-DeployScript {
 	- The script either performs an "Install", "Uninstall", or "Repair" deployment type.
 	- The install deployment type is broken down into 3 main sections/phases: Pre-Install, Install, and Post-Install.
 	The script imports the PSAppDeployToolkit module which contains the logic and functions required to install or uninstall an application.
+$recipeProvenance
 .PARAMETER DeploymentType
 	The type of deployment to perform.
 .PARAMETER DeployMode
@@ -537,6 +811,7 @@ function Install-ADTDeployment
 	Show-ADTInstallationProgress
 
 $processKillBlock
+$preInstallRecipeBlock
 
 
 	##================================================
@@ -552,6 +827,7 @@ $installBlock
 	##================================================
 	`$adtSession.InstallPhase = "Post-`$(`$adtSession.DeploymentType)"
 $shortcutBlock
+$postInstallRecipeBlock
 }
 
 
@@ -571,6 +847,7 @@ function Uninstall-ADTDeployment
 	Show-ADTInstallationProgress
 
 $processKillBlock
+$preUninstallRecipeBlock
 
 
 	##================================================
@@ -587,6 +864,7 @@ $uninstallBlock
 	`$adtSession.InstallPhase = "Post-`$(`$adtSession.DeploymentType)"
 
 	## <Perform Post-Uninstallation tasks here>
+$postUninstallRecipeBlock
 }
 
 
@@ -1016,6 +1294,46 @@ $tbShortcut = New-StyledTextBox 180 $y 400
 $form.Controls.Add($tbShortcut)
 
 $y += 35
+Add-Label "Recipe Library:" 10 $y | Out-Null
+$tbRecipePath = New-StyledTextBox 180 $y 500
+$tbRecipePath.Text = $RecipeSharePath
+$form.Controls.Add($tbRecipePath)
+
+$btnBrowseRecipes = New-Object System.Windows.Forms.Button
+$btnBrowseRecipes.Text = "Browse..."
+$btnBrowseRecipes.Size = New-Object System.Drawing.Size(80, 25)
+$btnBrowseRecipes.Location = New-Object System.Drawing.Point(690, $y)
+Style-Button $btnBrowseRecipes
+$form.Controls.Add($btnBrowseRecipes)
+
+$btnRefreshRecipes = New-Object System.Windows.Forms.Button
+$btnRefreshRecipes.Text = "Refresh"
+$btnRefreshRecipes.Size = New-Object System.Drawing.Size(90, 25)
+$btnRefreshRecipes.Location = New-Object System.Drawing.Point(780, $y)
+Style-Button $btnRefreshRecipes "#555555"
+$form.Controls.Add($btnRefreshRecipes)
+
+$y += 30
+Add-Label "PSADT Recipe:" 10 $y | Out-Null
+$cbRecipe = New-Object System.Windows.Forms.ComboBox
+$cbRecipe.Location = New-Object System.Drawing.Point(180, $y)
+$cbRecipe.Size = New-Object System.Drawing.Size(500, 25)
+$cbRecipe.DropDownStyle = "DropDownList"
+$form.Controls.Add($cbRecipe)
+
+$btnPreviewRecipe = New-Object System.Windows.Forms.Button
+$btnPreviewRecipe.Text = "Preview"
+$btnPreviewRecipe.Size = New-Object System.Drawing.Size(90, 25)
+$btnPreviewRecipe.Location = New-Object System.Drawing.Point(690, $y)
+$btnPreviewRecipe.Enabled = $false
+Style-Button $btnPreviewRecipe "#555555"
+$form.Controls.Add($btnPreviewRecipe)
+
+$y += 28
+$lblRecipeStatus = Add-Label "Basic package - no recipe selected" 180 $y
+$lblRecipeStatus.ForeColor = [System.Drawing.Color]::Silver
+
+$y += 28
 $btnGenScript = New-Object System.Windows.Forms.Button
 $btnGenScript.Text = "Generate PSADT Script + Open in ISE"
 $btnGenScript.Size = New-Object System.Drawing.Size(300, 32)
@@ -1121,6 +1439,141 @@ $form.Controls.Add($script:LogBox)
 
 # Track generated script path
 $script:GeneratedScriptPath = $null
+$script:SelectedRecipe = $null
+$script:RecipePathByDisplay = @{}
+
+function Refresh-RecipeList {
+    param([string]$PreferredPath = "")
+
+    $previousPath = $PreferredPath
+    if (-not $previousPath -and $script:SelectedRecipe) {
+        $previousPath = [string]$script:SelectedRecipe["_SourcePath"]
+    }
+
+    $cbRecipe.BeginUpdate()
+    try {
+        $cbRecipe.Items.Clear()
+        $script:RecipePathByDisplay = @{}
+        [void]$cbRecipe.Items.Add("None - Basic Package")
+
+        $libraryPath = $tbRecipePath.Text.Trim()
+        if (-not $libraryPath -or -not (Test-Path -LiteralPath $libraryPath -PathType Container)) {
+            $cbRecipe.SelectedIndex = 0
+            $lblRecipeStatus.Text = "Recipe library unavailable - basic package mode"
+            $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Orange
+            LogLine "Recipe library not found: $libraryPath"
+            return
+        }
+
+        $validCount = 0
+        $invalidCount = 0
+        $selectedDisplay = $null
+        $recipeFiles = Get-ChildItem -LiteralPath $libraryPath -Filter "*.psd1" -File |
+            Sort-Object Name
+
+        foreach ($file in $recipeFiles) {
+            try {
+                $recipe = Import-PsadtRecipe -Path $file.FullName
+                $versionLabel = if ($recipe.RecipeVersion) { " v$($recipe.RecipeVersion)" } else { "" }
+                $display = "$($recipe.Name)$versionLabel - $($file.Name)"
+                $script:RecipePathByDisplay[$display] = $file.FullName
+                [void]$cbRecipe.Items.Add($display)
+                $validCount++
+                if ($previousPath -and $file.FullName -eq $previousPath) {
+                    $selectedDisplay = $display
+                }
+            } catch {
+                $invalidCount++
+                LogLine ("Skipped invalid recipe '{0}': {1}" -f $file.Name, $_.Exception.Message)
+            }
+        }
+
+        if ($selectedDisplay) {
+            $cbRecipe.SelectedItem = $selectedDisplay
+        } else {
+            $cbRecipe.SelectedIndex = 0
+            $lblRecipeStatus.Text = if ($validCount) {
+                "Basic package - $validCount recipe(s) available"
+            } else {
+                "Basic package - no valid recipes found"
+            }
+            $lblRecipeStatus.ForeColor = if ($invalidCount) {
+                [System.Drawing.Color]::Orange
+            } else {
+                [System.Drawing.Color]::Silver
+            }
+        }
+        LogLine "Loaded $validCount PSADT recipe(s) from $libraryPath"
+    } finally {
+        $cbRecipe.EndUpdate()
+    }
+}
+
+function Get-SelectedPsadtRecipe {
+    $selectedDisplay = [string]$cbRecipe.SelectedItem
+    if (-not $selectedDisplay -or -not $script:RecipePathByDisplay.ContainsKey($selectedDisplay)) {
+        return $null
+    }
+    return Import-PsadtRecipe -Path $script:RecipePathByDisplay[$selectedDisplay]
+}
+
+function Show-PsadtRecipePreview {
+    param([System.Collections.IDictionary]$Recipe)
+
+    if (-not $Recipe) { return }
+
+    $version = if ($tbFileVersion.Text.Trim()) {
+        $tbFileVersion.Text.Trim()
+    } else {
+        $tbPkgVersion.Text.Trim()
+    }
+    $sections = Resolve-PsadtRecipeSections `
+        -Recipe $Recipe `
+        -Vendor $tbVendor.Text.Trim() `
+        -AppName $tbAppName.Text.Trim() `
+        -AppVersion $version `
+        -InstallerType $script:InstallerType `
+        -InstallerFile $script:InstallerFile
+
+    $previewParts = @(
+        "Recipe: $($Recipe.Name)$(if ($Recipe.RecipeVersion) { " v$($Recipe.RecipeVersion)" })",
+        "Source: $($Recipe["_SourcePath"])",
+        "SHA-256: $($Recipe["_Sha256"])",
+        "Install/Uninstall: nonblank recipe sections replace automatic commands",
+        ""
+    )
+    foreach ($sectionName in $RecipeSectionNames) {
+        $content = if ([string]::IsNullOrWhiteSpace($sections[$sectionName])) {
+            "(blank - nothing added)"
+        } else {
+            $sections[$sectionName]
+        }
+        $previewParts += "===== $sectionName ====="
+        $previewParts += $content
+        $previewParts += ""
+    }
+
+    $previewForm = New-Object System.Windows.Forms.Form
+    $previewForm.Text = "PSADT Recipe Preview - $($Recipe.Name)"
+    $previewForm.Size = New-Object System.Drawing.Size(900, 700)
+    $previewForm.StartPosition = "CenterParent"
+    $previewForm.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#2D2D30")
+    $previewForm.ForeColor = [System.Drawing.Color]::White
+    $previewForm.Font = New-Object System.Drawing.Font("Consolas", 10)
+
+    $previewBox = New-Object System.Windows.Forms.TextBox
+    $previewBox.Multiline = $true
+    $previewBox.ReadOnly = $true
+    $previewBox.ScrollBars = "Both"
+    $previewBox.WordWrap = $false
+    $previewBox.Dock = [System.Windows.Forms.DockStyle]::Fill
+    $previewBox.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#1E1E1E")
+    $previewBox.ForeColor = [System.Drawing.ColorTranslator]::FromHtml("#D4D4D4")
+    $previewBox.Text = $previewParts -join "`r`n"
+    $previewForm.Controls.Add($previewBox)
+
+    [void]$previewForm.ShowDialog($form)
+}
 
 # =========================
 # EVENT HANDLERS
@@ -1179,6 +1632,77 @@ $btnBrowse.Add_Click({
         if ($path) {
             Load-PsadtFolder -FolderPath $path
         }
+    }
+})
+
+# Browse for a recipe library. UNC paths can also be pasted directly into the
+# Recipe Library field and loaded with Refresh.
+$btnBrowseRecipes.Add_Click({
+    $dlg = New-Object System.Windows.Forms.FolderBrowserDialog
+    $dlg.Description = "Select the trusted PSADT recipe library"
+    $dlg.ShowNewFolderButton = $false
+    if ((Test-Path -LiteralPath $tbRecipePath.Text -PathType Container)) {
+        $dlg.SelectedPath = $tbRecipePath.Text
+    }
+    if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
+        $tbRecipePath.Text = $dlg.SelectedPath
+        Refresh-RecipeList
+    }
+})
+
+$btnRefreshRecipes.Add_Click({
+    Refresh-RecipeList
+})
+
+$tbRecipePath.Add_KeyDown({
+    if ($_.KeyCode -eq [System.Windows.Forms.Keys]::Enter) {
+        Refresh-RecipeList
+        $_.SuppressKeyPress = $true
+    }
+})
+
+$cbRecipe.Add_SelectedIndexChanged({
+    try {
+        $script:SelectedRecipe = Get-SelectedPsadtRecipe
+        if ($script:SelectedRecipe) {
+            $description = [string]$script:SelectedRecipe.Description
+            $lblRecipeStatus.Text = if ($description) {
+                $description
+            } else {
+                "Selected: $($script:SelectedRecipe.Name)"
+            }
+            $lblRecipeStatus.ForeColor = [System.Drawing.Color]::LightGreen
+            $btnPreviewRecipe.Enabled = $true
+            $btnPreviewRecipe.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#0078D7")
+            LogLine "Selected PSADT recipe: $($script:SelectedRecipe.Name)"
+        } else {
+            $lblRecipeStatus.Text = "Basic package - no recipe selected"
+            $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Silver
+            $btnPreviewRecipe.Enabled = $false
+            $btnPreviewRecipe.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#555555")
+        }
+    } catch {
+        $script:SelectedRecipe = $null
+        $lblRecipeStatus.Text = "Recipe error: $($_.Exception.Message)"
+        $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Red
+        $btnPreviewRecipe.Enabled = $false
+        LogLine ("Recipe selection failed: {0}" -f $_.Exception.Message)
+    }
+})
+
+$btnPreviewRecipe.Add_Click({
+    try {
+        $recipe = Get-SelectedPsadtRecipe
+        if ($recipe) { Show-PsadtRecipePreview -Recipe $recipe }
+    } catch {
+        LogLine ("Recipe preview failed: {0}" -f $_.Exception.Message)
+        [System.Windows.Forms.MessageBox]::Show(
+            $form,
+            $_.Exception.Message,
+            "Recipe Preview Error",
+            "OK",
+            "Error"
+        ) | Out-Null
     }
 })
 
@@ -1241,7 +1765,7 @@ $btnGenScript.Add_Click({
     
     # Determine output path
     $psadtFolder = $tbPsadtPath.Text
-    if ($psadtFolder -eq "(no folder selected)") {
+    if ([string]::IsNullOrWhiteSpace($psadtFolder) -or $psadtFolder -eq "(no folder selected)") {
         $psadtFolder = $env:TEMP
     }
     
@@ -1249,6 +1773,10 @@ $btnGenScript.Add_Click({
     $outputPath = Join-Path $psadtFolder "Invoke-AppDeployToolkit.ps1"
     
     try {
+        # Reload the selected recipe at generation time so changes made on the
+        # server share after the dropdown was refreshed are validated and used.
+        $selectedRecipe = Get-SelectedPsadtRecipe
+
         Generate-DeployScript `
             -Vendor $vendor `
             -AppName $appName `
@@ -1258,10 +1786,18 @@ $btnGenScript.Add_Click({
             -Author $author `
             -OutputPath $outputPath `
             -InstallerType $script:InstallerType `
-            -InstallerFile $script:InstallerFile
+            -InstallerFile $script:InstallerFile `
+            -Recipe $selectedRecipe
         
         $script:GeneratedScriptPath = $outputPath
         LogLine "Generated: $outputPath"
+
+        if ($selectedRecipe) {
+            $snapshotPath = Save-PsadtRecipeSnapshot `
+                -Recipe $selectedRecipe `
+                -PackageFolder $psadtFolder
+            LogLine "Recipe snapshot saved: $snapshotPath"
+        }
         
         # Rename .ps1 and .exe to VendorAppName-Version convention
         $baseName = ("{0}{1}-{2}" -f $vendor, $appName, $version) -replace '\s+', ''
@@ -1308,6 +1844,13 @@ $btnGenScript.Add_Click({
         
     } catch {
         LogLine ("Failed to generate script: {0}" -f $_.Exception.Message)
+        [System.Windows.Forms.MessageBox]::Show(
+            $form,
+            $_.Exception.Message,
+            "PSADT Script Generation Failed",
+            "OK",
+            "Error"
+        ) | Out-Null
     }
 })
 
@@ -1849,6 +2392,10 @@ $script:DocButtonTimer.Add_Tick({
     }
 })
 $script:DocButtonTimer.Start()
+
+# Load the configured local or server recipe library after all controls and
+# event handlers are ready.
+Refresh-RecipeList
 
 $form.TopMost = $false
 $form.Add_Shown({ $form.Activate() })
