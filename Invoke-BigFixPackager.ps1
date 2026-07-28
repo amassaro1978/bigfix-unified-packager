@@ -8,14 +8,14 @@
 .AUTHOR
     Anthony Massaro
 .VERSION
-    0.5.0
+    0.5.1
 #>
 
 Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 Add-Type -AssemblyName System.Web
 
-$ToolVer = "0.5.0 - Unified Packager"
+$ToolVer = "0.5.1 - Unified Packager"
 
 # =========================
 # CONFIG (customize per environment)
@@ -431,8 +431,8 @@ function Import-PsadtRecipe {
                 throw "Recipe section '$sectionName' contains unknown token(s): $($unknownTokens -join ', ')"
             }
 
-            # Validate syntax while loading the dropdown. Substitute harmless
-            # sample values because the actual package metadata is not known yet.
+            # Validate syntax when the selected recipe is imported. Substitute
+            # harmless sample values because package metadata is not known yet.
             $syntaxSample = [string]$sectionValue
             foreach ($token in $SupportedRecipeTokens) {
                 $sampleValue = if ($token -eq "{{FilesDirectory}}") {
@@ -497,7 +497,9 @@ function Expand-PsadtRecipeTokens {
         throw "Unknown recipe token(s): $($unresolved -join ', ')"
     }
 
-    return $expanded.Trim()
+    # Remove only surrounding line breaks. A general Trim() also removes the
+    # first line's intentional indentation while leaving later lines untouched.
+    return $expanded.Trim([char[]]@("`r", "`n"))
 }
 
 function Resolve-PsadtRecipeSections {
@@ -558,7 +560,7 @@ function Format-PsadtRecipeBlock {
     return @"
 
     # Recipe: $RecipeName [$SectionName]
-$($Text.Trim())
+$($Text.Trim([char[]]@("`r", "`n")))
     # End Recipe: $RecipeName [$SectionName]
 "@
 }
@@ -1457,7 +1459,7 @@ function Refresh-RecipeList {
         [void]$cbRecipe.Items.Add("None - Basic Package")
 
         $libraryPath = $tbRecipePath.Text.Trim()
-        if (-not $libraryPath -or -not (Test-Path -LiteralPath $libraryPath -PathType Container)) {
+        if (-not $libraryPath) {
             $cbRecipe.SelectedIndex = 0
             $lblRecipeStatus.Text = "Recipe library unavailable - basic package mode"
             $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Orange
@@ -1465,26 +1467,29 @@ function Refresh-RecipeList {
             return
         }
 
-        $validCount = 0
-        $invalidCount = 0
         $selectedDisplay = $null
-        $recipeFiles = Get-ChildItem -LiteralPath $libraryPath -Filter "*.psd1" -File |
-            Sort-Object Name
+        try {
+            # Keep startup fast on network shares: one directory listing only.
+            # Recipe contents are parsed, validated, and hashed lazily when the
+            # user selects a recipe and again immediately before generation.
+            $recipeFiles = @(
+                Get-ChildItem -LiteralPath $libraryPath -Filter "*.psd1" -File -ErrorAction Stop |
+                    Sort-Object Name
+            )
+        } catch {
+            $cbRecipe.SelectedIndex = 0
+            $lblRecipeStatus.Text = "Recipe library unavailable - basic package mode"
+            $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Orange
+            LogLine ("Recipe library could not be listed: {0}" -f $_.Exception.Message)
+            return
+        }
 
         foreach ($file in $recipeFiles) {
-            try {
-                $recipe = Import-PsadtRecipe -Path $file.FullName
-                $versionLabel = if ($recipe.RecipeVersion) { " v$($recipe.RecipeVersion)" } else { "" }
-                $display = "$($recipe.Name)$versionLabel - $($file.Name)"
-                $script:RecipePathByDisplay[$display] = $file.FullName
-                [void]$cbRecipe.Items.Add($display)
-                $validCount++
-                if ($previousPath -and $file.FullName -eq $previousPath) {
-                    $selectedDisplay = $display
-                }
-            } catch {
-                $invalidCount++
-                LogLine ("Skipped invalid recipe '{0}': {1}" -f $file.Name, $_.Exception.Message)
+            $display = $file.BaseName
+            $script:RecipePathByDisplay[$display] = $file.FullName
+            [void]$cbRecipe.Items.Add($display)
+            if ($previousPath -and $file.FullName -eq $previousPath) {
+                $selectedDisplay = $display
             }
         }
 
@@ -1492,18 +1497,14 @@ function Refresh-RecipeList {
             $cbRecipe.SelectedItem = $selectedDisplay
         } else {
             $cbRecipe.SelectedIndex = 0
-            $lblRecipeStatus.Text = if ($validCount) {
-                "Basic package - $validCount recipe(s) available"
+            $lblRecipeStatus.Text = if ($recipeFiles.Count) {
+                "Basic package - $($recipeFiles.Count) recipe(s) available"
             } else {
-                "Basic package - no valid recipes found"
+                "Basic package - no recipes found"
             }
-            $lblRecipeStatus.ForeColor = if ($invalidCount) {
-                [System.Drawing.Color]::Orange
-            } else {
-                [System.Drawing.Color]::Silver
-            }
+            $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Silver
         }
-        LogLine "Loaded $validCount PSADT recipe(s) from $libraryPath"
+        LogLine "Discovered $($recipeFiles.Count) PSADT recipe(s) from $libraryPath"
     } finally {
         $cbRecipe.EndUpdate()
     }
@@ -1692,7 +1693,10 @@ $cbRecipe.Add_SelectedIndexChanged({
 
 $btnPreviewRecipe.Add_Click({
     try {
-        $recipe = Get-SelectedPsadtRecipe
+        # Selection already loaded and validated this recipe. Reuse it for the
+        # preview instead of reading and hashing the network file a second time.
+        $recipe = $script:SelectedRecipe
+        if (-not $recipe) { $recipe = Get-SelectedPsadtRecipe }
         if ($recipe) { Show-PsadtRecipePreview -Recipe $recipe }
     } catch {
         LogLine ("Recipe preview failed: {0}" -f $_.Exception.Message)
