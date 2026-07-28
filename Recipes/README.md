@@ -4,6 +4,11 @@ Set `$RecipeSharePath` near the top of `Invoke-BigFixPackager.ps1` to this
 folder or to a trusted UNC share. The Unified Packager loads `*.psd1` recipe
 files from that location.
 
+Start a new recipe by copying
+`Templates\Recipe-Template.psd1` into the recipe-library root, renaming it for
+the application, and filling in only the sections the package needs. The
+`Templates` subfolder is not scanned by the dropdown.
+
 ## Required fields
 
 - `SchemaVersion` must be `1.0`.
