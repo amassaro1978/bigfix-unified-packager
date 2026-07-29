@@ -1530,7 +1530,7 @@ $tbPrefetch = New-StyledTextBox 180 $y 700 80 $true
 $form.Controls.Add($tbPrefetch)
 
 # --- Section: Relevance ---
-$y += 55
+$y += 95
 Add-Label "- Relevance -" 10 $y -Bold | Out-Null
 $y += 25
 
