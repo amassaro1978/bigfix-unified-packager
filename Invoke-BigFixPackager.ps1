@@ -183,10 +183,19 @@ function Get-IconBase64([string]$IconPath) {
     return @{ Base64 = $b64; MimeType = $mime; DataUri = "data:$mime;base64,$b64" }
 }
 
+function Resolve-NativeFilePath([string]$Path) {
+    $resolved = Resolve-Path -LiteralPath $Path -ErrorAction Stop
+    if ($resolved.ProviderPath) {
+        return $resolved.ProviderPath
+    }
+    return $resolved.Path
+}
+
 function Get-IconPreview([string]$IconPath, [int]$MaxSize=64) {
     $sourceImage = $null
     $icon = $null
     try {
+        $IconPath = Resolve-NativeFilePath -Path $IconPath
         # Image.FromFile does not reliably render .ico files. Load those
         # through System.Drawing.Icon, and clone raster images so the preview
         # is detached from the source file (including files on UNC shares).
@@ -524,7 +533,7 @@ function Import-PsadtRecipe {
         }
     }
 
-    $recipe["_SourcePath"] = (Resolve-Path -LiteralPath $Path).Path
+    $recipe["_SourcePath"] = Resolve-NativeFilePath -Path $Path
     $recipe["_Sha256"] = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
     if (-not [string]::IsNullOrWhiteSpace([string]$recipe.FixletIconPath)) {
         $iconPath = [Environment]::ExpandEnvironmentVariables(([string]$recipe.FixletIconPath).Trim())
@@ -537,7 +546,7 @@ function Import-PsadtRecipe {
         if ([System.IO.Path]::GetExtension($iconPath) -notin @(".png", ".jpg", ".jpeg", ".ico")) {
             throw "Recipe '$Path' FixletIconPath must be a PNG, JPG, JPEG, or ICO file."
         }
-        $recipe["_ResolvedFixletIconPath"] = (Resolve-Path -LiteralPath $iconPath).Path
+        $recipe["_ResolvedFixletIconPath"] = Resolve-NativeFilePath -Path $iconPath
     }
     return $recipe
 }
@@ -1373,7 +1382,7 @@ function Set-SelectedFixletIcon {
         $picIcon.Image = $null
     }
 
-    $script:SelectedIconPath = (Resolve-Path -LiteralPath $Path).Path
+    $script:SelectedIconPath = Resolve-NativeFilePath -Path $Path
     $script:SelectedIconFromRecipe = $FromRecipe.IsPresent
     $cbIcon.Tag = $null
     $cbIcon.Items.Clear()
