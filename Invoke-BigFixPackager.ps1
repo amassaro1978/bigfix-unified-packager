@@ -184,15 +184,43 @@ function Get-IconBase64([string]$IconPath) {
 }
 
 function Get-IconPreview([string]$IconPath, [int]$MaxSize=64) {
+    $sourceImage = $null
+    $icon = $null
     try {
-        $img = [System.Drawing.Image]::FromFile($IconPath)
-        $ratio = [Math]::Min($MaxSize / $img.Width, $MaxSize / $img.Height)
-        $newW = [int]($img.Width * $ratio)
-        $newH = [int]($img.Height * $ratio)
-        $thumb = $img.GetThumbnailImage($newW, $newH, $null, [IntPtr]::Zero)
-        $img.Dispose()
+        # Image.FromFile does not reliably render .ico files. Load those
+        # through System.Drawing.Icon, and clone raster images so the preview
+        # is detached from the source file (including files on UNC shares).
+        if ([System.IO.Path]::GetExtension($IconPath).Equals(".ico", [System.StringComparison]::OrdinalIgnoreCase)) {
+            $icon = [System.Drawing.Icon]::new($IconPath)
+            $sourceImage = $icon.ToBitmap()
+        } else {
+            $sourceImage = [System.Drawing.Bitmap]::new($IconPath)
+        }
+
+        if ($sourceImage.Width -le 0 -or $sourceImage.Height -le 0) {
+            throw "The image has invalid dimensions."
+        }
+
+        $ratio = [Math]::Min($MaxSize / $sourceImage.Width, $MaxSize / $sourceImage.Height)
+        $newW = [Math]::Max(1, [int]($sourceImage.Width * $ratio))
+        $newH = [Math]::Max(1, [int]($sourceImage.Height * $ratio))
+        $thumb = [System.Drawing.Bitmap]::new($newW, $newH)
+        $graphics = [System.Drawing.Graphics]::FromImage($thumb)
+        try {
+            $graphics.Clear([System.Drawing.Color]::Transparent)
+            $graphics.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
+            $graphics.DrawImage($sourceImage, 0, 0, $newW, $newH)
+        } finally {
+            $graphics.Dispose()
+        }
         return $thumb
-    } catch { return $null }
+    } catch {
+        LogLine "Icon preview failed for '$IconPath': $($_.Exception.Message)"
+        return $null
+    } finally {
+        if ($sourceImage) { $sourceImage.Dispose() }
+        if ($icon) { $icon.Dispose() }
+    }
 }
 
 # =========================
@@ -1353,9 +1381,18 @@ function Set-SelectedFixletIcon {
     $cbIcon.SelectedIndex = 0
 
     $preview = Get-IconPreview -IconPath $script:SelectedIconPath
-    if ($preview) { $picIcon.Image = $preview }
-    $lblIconStatus.Text = "[OK] Icon selected from $Source"
-    $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
+    if ($preview) {
+        $picIcon.Image = $preview
+        # Recipe selection does not open/close a modal dialog like manual
+        # Browse does, so explicitly repaint the PictureBox immediately.
+        $picIcon.Invalidate()
+        $picIcon.Update()
+        $lblIconStatus.Text = "[OK] Icon selected from $Source"
+        $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
+    } else {
+        $lblIconStatus.Text = "[!] Icon selected from $Source - preview unavailable"
+        $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
+    }
     LogLine "Icon selected from $Source`: $($script:SelectedIconPath)"
 }
 
