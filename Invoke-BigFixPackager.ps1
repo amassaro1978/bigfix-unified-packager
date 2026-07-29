@@ -427,6 +427,29 @@ function Import-PsadtRecipe {
     if ($null -ne $recipe.FixletIconPath -and -not ($recipe.FixletIconPath -is [string])) {
         throw "Recipe '$Path' FixletIconPath must be a string."
     }
+    if ($null -ne $recipe.ProcessesToKill) {
+        if ($recipe.ProcessesToKill -is [string] -or
+            -not ($recipe.ProcessesToKill -is [System.Collections.IEnumerable])) {
+            throw "Recipe '$Path' ProcessesToKill must be an array of process-name strings."
+        }
+        $invalidProcesses = @(
+            $recipe.ProcessesToKill |
+                Where-Object { -not ($_ -is [string]) -or [string]::IsNullOrWhiteSpace([string]$_) }
+        )
+        if ($invalidProcesses.Count -gt 0) {
+            throw "Recipe '$Path' ProcessesToKill must contain only nonblank process-name strings."
+        }
+        $recipe["_ResolvedProcessesToKill"] = @(
+            $recipe.ProcessesToKill | ForEach-Object { ([string]$_).Trim() }
+        )
+    }
+    if ($null -ne $recipe.DesktopShortcutName -and
+        -not ($recipe.DesktopShortcutName -is [string])) {
+        throw "Recipe '$Path' DesktopShortcutName must be a string."
+    }
+    if (-not [string]::IsNullOrWhiteSpace([string]$recipe.DesktopShortcutName)) {
+        $recipe["_ResolvedDesktopShortcutName"] = ([string]$recipe.DesktopShortcutName).Trim()
+    }
     if (-not $recipe.Sections -or -not ($recipe.Sections -is [System.Collections.IDictionary])) {
         throw "Recipe '$Path' must contain a Sections hashtable."
     }
@@ -1392,6 +1415,57 @@ Add-Label "Desktop Shortcut Name:" 10 $y | Out-Null
 $tbShortcut = New-StyledTextBox 180 $y 400
 $form.Controls.Add($tbShortcut)
 
+$script:ProcessesFromRecipe = $false
+$script:ShortcutFromRecipe = $false
+$script:ApplyingRecipeFieldDefaults = $false
+
+function Clear-RecipeFieldDefaults {
+    $script:ApplyingRecipeFieldDefaults = $true
+    try {
+        if ($script:ProcessesFromRecipe) {
+            $tbProcesses.Text = "(optional, comma-separated for multiple)"
+        }
+        if ($script:ShortcutFromRecipe) {
+            $tbShortcut.Clear()
+        }
+        $script:ProcessesFromRecipe = $false
+        $script:ShortcutFromRecipe = $false
+    } finally {
+        $script:ApplyingRecipeFieldDefaults = $false
+    }
+}
+
+function Set-RecipeFieldDefaults {
+    param([Parameter(Mandatory = $true)][System.Collections.IDictionary]$Recipe)
+
+    Clear-RecipeFieldDefaults
+    $script:ApplyingRecipeFieldDefaults = $true
+    try {
+        if ($Recipe["_ResolvedProcessesToKill"]) {
+            $tbProcesses.Text = @($Recipe["_ResolvedProcessesToKill"]) -join ", "
+            $script:ProcessesFromRecipe = $true
+        }
+        if ($Recipe["_ResolvedDesktopShortcutName"]) {
+            $tbShortcut.Text = [string]$Recipe["_ResolvedDesktopShortcutName"]
+            $script:ShortcutFromRecipe = $true
+        }
+    } finally {
+        $script:ApplyingRecipeFieldDefaults = $false
+    }
+}
+
+$tbProcesses.Add_TextChanged({
+    if (-not $script:ApplyingRecipeFieldDefaults) {
+        $script:ProcessesFromRecipe = $false
+    }
+})
+
+$tbShortcut.Add_TextChanged({
+    if (-not $script:ApplyingRecipeFieldDefaults) {
+        $script:ShortcutFromRecipe = $false
+    }
+})
+
 $y += 28
 $btnGenScript = New-Object System.Windows.Forms.Button
 $btnGenScript.Text = "Generate PSADT Script + Open in ISE"
@@ -1586,6 +1660,8 @@ function Show-PsadtRecipePreview {
         "Source: $($Recipe["_SourcePath"])",
         "SHA-256: $($Recipe["_Sha256"])",
         "Fixlet icon: $(if ($Recipe["_ResolvedFixletIconPath"]) { $Recipe["_ResolvedFixletIconPath"] } else { "(not specified)" })",
+        "Processes to kill: $(if ($Recipe["_ResolvedProcessesToKill"]) { @($Recipe["_ResolvedProcessesToKill"]) -join ', ' } else { "(not specified)" })",
+        "Desktop shortcut name: $(if ($Recipe["_ResolvedDesktopShortcutName"]) { $Recipe["_ResolvedDesktopShortcutName"] } else { "(not specified)" })",
         "Install/Uninstall: nonblank recipe sections replace automatic commands",
         ""
     )
@@ -1726,8 +1802,10 @@ $cbRecipe.Add_SelectedIndexChanged({
             } else {
                 Clear-RecipeFixletIcon
             }
+            Set-RecipeFieldDefaults -Recipe $script:SelectedRecipe
         } else {
             Clear-RecipeFixletIcon
+            Clear-RecipeFieldDefaults
             $lblRecipeStatus.Text = "Basic package - no recipe selected"
             $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Silver
             $btnPreviewRecipe.Enabled = $false
@@ -1735,6 +1813,7 @@ $cbRecipe.Add_SelectedIndexChanged({
         }
     } catch {
         Clear-RecipeFixletIcon
+        Clear-RecipeFieldDefaults
         $script:SelectedRecipe = $null
         $lblRecipeStatus.Text = "Recipe error: $($_.Exception.Message)"
         $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Red

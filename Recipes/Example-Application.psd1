@@ -5,6 +5,9 @@
     Vendor = 'Example Vendor'
     Description = 'Example showing all supported PSADT recipe sections and tokens.'
 
+    ProcessesToKill = @('ExampleApp', 'ExampleUpdater')
+    DesktopShortcutName = 'Example Application'
+
     Sections = @{
         PreInstall = @'
 # Runs after the Unified Packager's automatic process-kill block.

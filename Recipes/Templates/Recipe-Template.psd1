@@ -9,6 +9,11 @@
     # resolved from this recipe file's folder.
     FixletIconPath = ''
 
+    # Optional defaults. Use process executable names without ".exe" and the
+    # desktop shortcut filename without ".lnk".
+    ProcessesToKill = @()
+    DesktopShortcutName = ''
+
     Sections = @{
         # Runs after the Unified Packager's automatic pre-install process kills.
         PreInstall = @'
