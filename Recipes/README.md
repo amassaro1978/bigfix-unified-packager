@@ -15,7 +15,13 @@ the application, and filling in only the sections the package needs. The
 - `Name` is the friendly name shown in the dropdown.
 - `Sections` must be a hashtable.
 
-`RecipeVersion`, `Vendor`, and `Description` are optional metadata.
+`RecipeVersion`, `Vendor`, `Description`, and `FixletIconPath` are optional
+metadata.
+
+When `FixletIconPath` is set, selecting the recipe automatically selects and
+previews that image in the Unified Packager's Fixlet Icon field. Use a trusted
+PNG, JPG, JPEG, or ICO file. UNC and absolute paths are used as written;
+relative paths are resolved from the recipe file's folder.
 
 ## Supported sections
 

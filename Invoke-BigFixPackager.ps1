@@ -201,7 +201,9 @@ function Get-IconPreview([string]$IconPath, [int]$MaxSize=64) {
 function Show-CredentialDialog {
     param(
         [string]$Title = "Enter Credentials",
-        [string]$Message = "Enter your BigFix credentials"
+        [string]$Message = "Enter your BigFix credentials",
+        [System.Windows.Forms.IWin32Window]$Owner = $null,
+        [switch]$StayOnTop
     )
     
     $credForm = New-Object System.Windows.Forms.Form
@@ -214,6 +216,8 @@ function Show-CredentialDialog {
     $credForm.FormBorderStyle = "FixedDialog"
     $credForm.MaximizeBox = $false
     $credForm.MinimizeBox = $false
+    $credForm.ShowInTaskbar = $false
+    $credForm.TopMost = $StayOnTop.IsPresent
     
     $lblMsg = New-Object System.Windows.Forms.Label
     $lblMsg.Text = $Message
@@ -274,8 +278,18 @@ function Show-CredentialDialog {
     
     $credForm.AcceptButton = $btnOK
     $credForm.CancelButton = $btnCancel
-    
-    $result = $credForm.ShowDialog()
+
+    $credForm.Add_Shown({
+        $credForm.Activate()
+        $credForm.BringToFront()
+        $tbCredUser.Focus()
+    })
+
+    $result = if ($Owner) {
+        $credForm.ShowDialog($Owner)
+    } else {
+        $credForm.ShowDialog()
+    }
     
     if ($result -eq [System.Windows.Forms.DialogResult]::OK -and $tbCredUser.Text.Trim() -and $tbCredPass.Text) {
         return @{ User = $tbCredUser.Text.Trim(); Pass = $tbCredPass.Text }
@@ -410,6 +424,9 @@ function Import-PsadtRecipe {
     if ([string]::IsNullOrWhiteSpace([string]$recipe.Name)) {
         throw "Recipe '$Path' is missing Name."
     }
+    if ($null -ne $recipe.FixletIconPath -and -not ($recipe.FixletIconPath -is [string])) {
+        throw "Recipe '$Path' FixletIconPath must be a string."
+    }
     if (-not $recipe.Sections -or -not ($recipe.Sections -is [System.Collections.IDictionary])) {
         throw "Recipe '$Path' must contain a Sections hashtable."
     }
@@ -458,6 +475,19 @@ function Import-PsadtRecipe {
 
     $recipe["_SourcePath"] = (Resolve-Path -LiteralPath $Path).Path
     $recipe["_Sha256"] = (Get-FileHash -LiteralPath $Path -Algorithm SHA256).Hash
+    if (-not [string]::IsNullOrWhiteSpace([string]$recipe.FixletIconPath)) {
+        $iconPath = [Environment]::ExpandEnvironmentVariables(([string]$recipe.FixletIconPath).Trim())
+        if (-not [System.IO.Path]::IsPathRooted($iconPath)) {
+            $iconPath = Join-Path (Split-Path -Parent $recipe["_SourcePath"]) $iconPath
+        }
+        if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+            throw "Recipe '$Path' FixletIconPath was not found: $iconPath"
+        }
+        if ([System.IO.Path]::GetExtension($iconPath) -notin @(".png", ".jpg", ".jpeg", ".ico")) {
+            throw "Recipe '$Path' FixletIconPath must be a PNG, JPG, JPEG, or ICO file."
+        }
+        $recipe["_ResolvedFixletIconPath"] = (Resolve-Path -LiteralPath $iconPath).Path
+    }
     return $recipe
 }
 
@@ -1160,6 +1190,46 @@ $btnBrowse.Location = New-Object System.Drawing.Point(570, $y)
 Style-Button $btnBrowse
 $form.Controls.Add($btnBrowse)
 
+$y += 30
+Add-Label "PSADT Recipe:" 10 $y | Out-Null
+$cbRecipe = New-Object System.Windows.Forms.ComboBox
+$cbRecipe.Location = New-Object System.Drawing.Point(130, $y)
+$cbRecipe.Size = New-Object System.Drawing.Size(430, 25)
+$cbRecipe.DropDownStyle = "DropDownList"
+$form.Controls.Add($cbRecipe)
+
+$btnPreviewRecipe = New-Object System.Windows.Forms.Button
+$btnPreviewRecipe.Text = "Preview"
+$btnPreviewRecipe.Size = New-Object System.Drawing.Size(80, 25)
+$btnPreviewRecipe.Location = New-Object System.Drawing.Point(570, $y)
+$btnPreviewRecipe.Enabled = $false
+Style-Button $btnPreviewRecipe "#555555"
+$form.Controls.Add($btnPreviewRecipe)
+
+$y += 28
+$lblRecipeStatus = Add-Label "Basic package - no recipe selected" 130 $y
+$lblRecipeStatus.ForeColor = [System.Drawing.Color]::Silver
+
+$y += 28
+Add-Label "Recipe Library:" 10 $y | Out-Null
+$tbRecipePath = New-StyledTextBox 130 $y 520
+$tbRecipePath.Text = $RecipeSharePath
+$form.Controls.Add($tbRecipePath)
+
+$btnBrowseRecipes = New-Object System.Windows.Forms.Button
+$btnBrowseRecipes.Text = "Browse..."
+$btnBrowseRecipes.Size = New-Object System.Drawing.Size(80, 25)
+$btnBrowseRecipes.Location = New-Object System.Drawing.Point(660, $y)
+Style-Button $btnBrowseRecipes
+$form.Controls.Add($btnBrowseRecipes)
+
+$btnRefreshRecipes = New-Object System.Windows.Forms.Button
+$btnRefreshRecipes.Text = "Refresh"
+$btnRefreshRecipes.Size = New-Object System.Drawing.Size(90, 25)
+$btnRefreshRecipes.Location = New-Object System.Drawing.Point(750, $y)
+Style-Button $btnRefreshRecipes "#555555"
+$form.Controls.Add($btnRefreshRecipes)
+
 $y += 45
 Add-Label "- Package Info -" 10 $y -Bold | Out-Null
 $y += 25
@@ -1177,16 +1247,6 @@ $y += 30
 Add-Label "Package Version:" 10 $y | Out-Null
 $tbPkgVersion = New-StyledTextBox 180 $y 300
 $form.Controls.Add($tbPkgVersion)
-
-$y += 30
-Add-Label "Exe Name (relevance):" 10 $y | Out-Null
-$tbExeName = New-StyledTextBox 180 $y 300
-$form.Controls.Add($tbExeName)
-
-$y += 30
-Add-Label "File Version (if diff):" 10 $y | Out-Null
-$tbFileVersion = New-StyledTextBox 180 $y 300
-$form.Controls.Add($tbFileVersion)
 
 $y += 30
 Add-Label "Author:" 10 $y | Out-Null
@@ -1244,22 +1304,59 @@ $lblIconStatus = Add-Label "(no icon selected)" 260 ($y + 20)
 
 # Track selected icon path
 $script:SelectedIconPath = $null
+$script:SelectedIconFromRecipe = $false
+
+function Set-SelectedFixletIcon {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [string]$Source = "manual selection",
+        [switch]$FromRecipe
+    )
+
+    if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) {
+        throw "Icon file not found: $Path"
+    }
+
+    if ($picIcon.Image) {
+        $picIcon.Image.Dispose()
+        $picIcon.Image = $null
+    }
+
+    $script:SelectedIconPath = (Resolve-Path -LiteralPath $Path).Path
+    $script:SelectedIconFromRecipe = $FromRecipe.IsPresent
+    $cbIcon.Tag = $null
+    $cbIcon.Items.Clear()
+    [void]$cbIcon.Items.Add([System.IO.Path]::GetFileName($script:SelectedIconPath))
+    $cbIcon.SelectedIndex = 0
+
+    $preview = Get-IconPreview -IconPath $script:SelectedIconPath
+    if ($preview) { $picIcon.Image = $preview }
+    $lblIconStatus.Text = "[OK] Icon selected from $Source"
+    $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
+    LogLine "Icon selected from $Source`: $($script:SelectedIconPath)"
+}
+
+function Clear-RecipeFixletIcon {
+    if (-not $script:SelectedIconFromRecipe) { return }
+    if ($picIcon.Image) {
+        $picIcon.Image.Dispose()
+        $picIcon.Image = $null
+    }
+    $script:SelectedIconPath = $null
+    $script:SelectedIconFromRecipe = $false
+    $cbIcon.Tag = $null
+    $cbIcon.Items.Clear()
+    $lblIconStatus.Text = "(no icon selected)"
+    $lblIconStatus.ForeColor = [System.Drawing.Color]::Silver
+}
 
 # Icon browse button
 $btnBrowseIcon.Add_Click({
     $dlg = New-Object System.Windows.Forms.OpenFileDialog
     $dlg.Filter = "Image Files (*.png;*.jpg;*.jpeg;*.ico)|*.png;*.jpg;*.jpeg;*.ico|All Files (*.*)|*.*"
     $dlg.Title = "Select Icon File"
-    if ($dlg.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) {
-        $script:SelectedIconPath = $dlg.FileName
-        $cbIcon.Items.Clear()
-        $cbIcon.Items.Add([System.IO.Path]::GetFileName($dlg.FileName))
-        $cbIcon.SelectedIndex = 0
-        $preview = Get-IconPreview -IconPath $dlg.FileName
-        if ($preview) { $picIcon.Image = $preview }
-        $lblIconStatus.Text = "[OK] Icon selected"
-        $lblIconStatus.ForeColor = [System.Drawing.Color]::LightGreen
-        LogLine "Icon selected: $($dlg.FileName)"
+    if ($dlg.ShowDialog($form) -eq [System.Windows.Forms.DialogResult]::OK) {
+        Set-SelectedFixletIcon -Path $dlg.FileName
     }
 })
 
@@ -1287,53 +1384,13 @@ $y += 25
 
 Add-Label "Processes to Kill:" 10 $y | Out-Null
 $tbProcesses = New-StyledTextBox 180 $y 500
-$tbProcesses.Text = "(auto-filled from exe name, comma-separated for multiple)"
+$tbProcesses.Text = "(optional, comma-separated for multiple)"
 $form.Controls.Add($tbProcesses)
 
 $y += 30
 Add-Label "Desktop Shortcut Name:" 10 $y | Out-Null
 $tbShortcut = New-StyledTextBox 180 $y 400
 $form.Controls.Add($tbShortcut)
-
-$y += 35
-Add-Label "Recipe Library:" 10 $y | Out-Null
-$tbRecipePath = New-StyledTextBox 180 $y 500
-$tbRecipePath.Text = $RecipeSharePath
-$form.Controls.Add($tbRecipePath)
-
-$btnBrowseRecipes = New-Object System.Windows.Forms.Button
-$btnBrowseRecipes.Text = "Browse..."
-$btnBrowseRecipes.Size = New-Object System.Drawing.Size(80, 25)
-$btnBrowseRecipes.Location = New-Object System.Drawing.Point(690, $y)
-Style-Button $btnBrowseRecipes
-$form.Controls.Add($btnBrowseRecipes)
-
-$btnRefreshRecipes = New-Object System.Windows.Forms.Button
-$btnRefreshRecipes.Text = "Refresh"
-$btnRefreshRecipes.Size = New-Object System.Drawing.Size(90, 25)
-$btnRefreshRecipes.Location = New-Object System.Drawing.Point(780, $y)
-Style-Button $btnRefreshRecipes "#555555"
-$form.Controls.Add($btnRefreshRecipes)
-
-$y += 30
-Add-Label "PSADT Recipe:" 10 $y | Out-Null
-$cbRecipe = New-Object System.Windows.Forms.ComboBox
-$cbRecipe.Location = New-Object System.Drawing.Point(180, $y)
-$cbRecipe.Size = New-Object System.Drawing.Size(500, 25)
-$cbRecipe.DropDownStyle = "DropDownList"
-$form.Controls.Add($cbRecipe)
-
-$btnPreviewRecipe = New-Object System.Windows.Forms.Button
-$btnPreviewRecipe.Text = "Preview"
-$btnPreviewRecipe.Size = New-Object System.Drawing.Size(90, 25)
-$btnPreviewRecipe.Location = New-Object System.Drawing.Point(690, $y)
-$btnPreviewRecipe.Enabled = $false
-Style-Button $btnPreviewRecipe "#555555"
-$form.Controls.Add($btnPreviewRecipe)
-
-$y += 28
-$lblRecipeStatus = Add-Label "Basic package - no recipe selected" 180 $y
-$lblRecipeStatus.ForeColor = [System.Drawing.Color]::Silver
 
 $y += 28
 $btnGenScript = New-Object System.Windows.Forms.Button
@@ -1363,17 +1420,9 @@ $form.Controls.Add($tbPrefetch)
 
 # --- Section: Relevance ---
 $y += 55
-Add-Label "- Relevance (auto-generated, edit for snowflake apps) -" 10 $y -Bold | Out-Null
+Add-Label "- Relevance -" 10 $y -Bold | Out-Null
 $y += 25
 
-$btnGenRel = New-Object System.Windows.Forms.Button
-$btnGenRel.Text = "Generate Relevance"
-$btnGenRel.Size = New-Object System.Drawing.Size(180, 28)
-$btnGenRel.Location = New-Object System.Drawing.Point(10, $y)
-Style-Button $btnGenRel
-$form.Controls.Add($btnGenRel)
-
-$y += 35
 Add-Label "Install:" 10 $y | Out-Null
 $tbInstallRel = New-StyledTextBox 80 $y 800 30 $true
 $form.Controls.Add($tbInstallRel)
@@ -1523,11 +1572,7 @@ function Show-PsadtRecipePreview {
 
     if (-not $Recipe) { return }
 
-    $version = if ($tbFileVersion.Text.Trim()) {
-        $tbFileVersion.Text.Trim()
-    } else {
-        $tbPkgVersion.Text.Trim()
-    }
+    $version = $tbPkgVersion.Text.Trim()
     $sections = Resolve-PsadtRecipeSections `
         -Recipe $Recipe `
         -Vendor $tbVendor.Text.Trim() `
@@ -1540,6 +1585,7 @@ function Show-PsadtRecipePreview {
         "Recipe: $($Recipe.Name)$(if ($Recipe.RecipeVersion) { " v$($Recipe.RecipeVersion)" })",
         "Source: $($Recipe["_SourcePath"])",
         "SHA-256: $($Recipe["_Sha256"])",
+        "Fixlet icon: $(if ($Recipe["_ResolvedFixletIconPath"]) { $Recipe["_ResolvedFixletIconPath"] } else { "(not specified)" })",
         "Install/Uninstall: nonblank recipe sections replace automatic commands",
         ""
     )
@@ -1598,21 +1644,17 @@ function Load-PsadtFolder {
         if ($info.AppName) { $tbAppName.Text = $info.AppName }
         if ($info.Version) { $tbPkgVersion.Text = $info.Version }
         
-        # Default process name = exe name without extension
-        $defaultProc = if ($tbExeName.Text.Trim()) { 
-            [System.IO.Path]::GetFileNameWithoutExtension($tbExeName.Text.Trim()) 
-        } else { "" }
-        if ($defaultProc) { $tbProcesses.Text = $defaultProc }
-        
         $script:InstallerType = $info.InstallerType
         $script:InstallerFile = $info.InstallerFile
         LogLine ("Parsed: App={0}, Ver={1}, PSADT Exe={2}, Installer={3} ({4})" -f $info.AppName, $info.Version, $info.PsadtExeName, $info.InstallerType, $info.InstallerFile)
         
-        # Icon is NOT auto-picked from PSADT folder — user must select the self-service icon via Browse
-        # DO NOT call Find-IconFiles here — Files/ folder contains installer icons, not the self-service icon
-        $lblIconStatus.Text = "[!] No icon selected - use Browse"
-        $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
-        LogLine "Icon must be selected manually via Browse button (self-service icon, not installer icon)"
+        # Icon is not picked from the PSADT folder. Keep a manual or
+        # recipe-provided self-service icon if one is already selected.
+        if (-not $script:SelectedIconPath) {
+            $lblIconStatus.Text = "[!] No icon selected - use Browse or choose a recipe with FixletIconPath"
+            $lblIconStatus.ForeColor = [System.Drawing.Color]::Orange
+            LogLine "No Fixlet icon selected (choose one manually or through a recipe)"
+        }
     } catch {
         LogLine ("Could not auto-parse: {0}" -f $_.Exception.Message)
     }
@@ -1676,13 +1718,23 @@ $cbRecipe.Add_SelectedIndexChanged({
             $btnPreviewRecipe.Enabled = $true
             $btnPreviewRecipe.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#0078D7")
             LogLine "Selected PSADT recipe: $($script:SelectedRecipe.Name)"
+            if ($script:SelectedRecipe["_ResolvedFixletIconPath"]) {
+                Set-SelectedFixletIcon `
+                    -Path $script:SelectedRecipe["_ResolvedFixletIconPath"] `
+                    -Source "recipe '$($script:SelectedRecipe.Name)'" `
+                    -FromRecipe
+            } else {
+                Clear-RecipeFixletIcon
+            }
         } else {
+            Clear-RecipeFixletIcon
             $lblRecipeStatus.Text = "Basic package - no recipe selected"
             $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Silver
             $btnPreviewRecipe.Enabled = $false
             $btnPreviewRecipe.BackColor = [System.Drawing.ColorTranslator]::FromHtml("#555555")
         }
     } catch {
+        Clear-RecipeFixletIcon
         $script:SelectedRecipe = $null
         $lblRecipeStatus.Text = "Recipe error: $($_.Exception.Message)"
         $lblRecipeStatus.ForeColor = [System.Drawing.Color]::Red
@@ -1718,39 +1770,11 @@ $tbPsadtPath.Add_KeyDown({
     }
 })
 
-# Auto-update process name when exe name changes
-$tbExeName.Add_Leave({
-    $exe = $tbExeName.Text.Trim()
-    if ($exe) {
-        $procName = [System.IO.Path]::GetFileNameWithoutExtension($exe)
-        if (-not $tbProcesses.Text.Trim() -or $tbProcesses.Text -match '^\(auto') {
-            $tbProcesses.Text = $procName
-        }
-    }
-})
-
-# Generate Relevance
-$btnGenRel.Add_Click({
-    $exe = $tbExeName.Text.Trim()
-    $ver = if ($tbFileVersion.Text.Trim()) { $tbFileVersion.Text.Trim() } else { $tbPkgVersion.Text.Trim() }
-    
-    if (-not $exe -or -not $ver) {
-        [System.Windows.Forms.MessageBox]::Show("Enter Exe Name and Version first.", "Missing Info", "OK", "Warning") | Out-Null
-        return
-    }
-    
-    $tbInstallRel.Text = "(not exists regapp `"$exe`")"
-    $tbUpdateRel.Text  = "(exists regapp `"$exe`" whose (version of it < `"$ver`" as version))"
-    $tbRemoveRel.Text  = "(exists regapp `"$exe`" whose (version of it = `"$ver`" as version))"
-    
-    LogLine "Relevance generated for $exe v$ver"
-})
-
 # Generate PSADT Script + Open ISE
 $btnGenScript.Add_Click({
     $vendor  = $tbVendor.Text.Trim()
     $appName = $tbAppName.Text.Trim()
-    $version = if ($tbFileVersion.Text.Trim()) { $tbFileVersion.Text.Trim() } else { $tbPkgVersion.Text.Trim() }
+    $version = $tbPkgVersion.Text.Trim()
     $author  = $tbAuthor.Text.Trim()
     
     if (-not $appName) {
@@ -1760,7 +1784,7 @@ $btnGenScript.Add_Click({
     
     # Parse processes (comma-separated)
     $procText = $tbProcesses.Text.Trim()
-    if ($procText -match '^\(auto') { $procText = "" }
+    if ($procText -match '^\((auto|optional)') { $procText = "" }
     $procs = if ($procText) { 
         ($procText -split ',') | ForEach-Object { $_.Trim() } | Where-Object { $_ } 
     } else { @() }
@@ -1911,7 +1935,7 @@ $btnPostAll.Add_Click({
     # Validate
     $vendor    = $tbVendor.Text.Trim()
     $appName   = $tbAppName.Text.Trim()
-    $version   = if ($tbFileVersion.Text.Trim()) { $tbFileVersion.Text.Trim() } else { $tbPkgVersion.Text.Trim() }
+    $version   = $tbPkgVersion.Text.Trim()
     $psadtExe  = ("{0}{1}-{2}.exe" -f $vendor, $appName, $version) -replace '\s+', ''
     $prefetch  = $tbPrefetch.Text.Trim()
     $extract   = ""  # combined into prefetch field
@@ -1923,8 +1947,8 @@ $btnPostAll.Add_Click({
         return
     }
     
-    if (-not $tbInstallRel.Text.Trim()) {
-        LogLine "[X] Generate relevance first (click 'Generate Relevance')"
+    if (-not ($tbInstallRel.Text.Trim() -and $tbUpdateRel.Text.Trim() -and $tbRemoveRel.Text.Trim())) {
+        LogLine "[X] Enter Install, Update, and Remove relevance before posting"
         return
     }
     
@@ -1940,7 +1964,7 @@ $btnPostAll.Add_Click({
     
     # --- Credential Prompt #1: Fixlet Creation ---
     LogLine "Requesting fixlet creation credentials..."
-    $fixletCreds = Show-CredentialDialog -Title "Fixlet Creation Credentials" -Message "Enter credentials for fixlet creation:"
+    $fixletCreds = Show-CredentialDialog -Title "Fixlet Creation Credentials" -Message "Enter credentials for fixlet creation:" -Owner $form
     if (-not $fixletCreds) {
         LogLine "Cancelled - no fixlet credentials provided."
         return
@@ -2002,7 +2026,7 @@ $btnPostAll.Add_Click({
                     
                     if ($httpCode -eq "401" -or $errMsg -match "401|Unauthorized") {
                         LogLine "[!] Authentication failed - please re-enter credentials"
-                        $fixletCreds = Show-CredentialDialog -Title "Fixlet Credentials (Retry)" -Message "Authentication failed (401). Please re-enter your credentials:"
+                        $fixletCreds = Show-CredentialDialog -Title "Fixlet Credentials (Retry)" -Message "Authentication failed (401). Please re-enter your credentials:" -Owner $form
                         if (-not $fixletCreds) {
                             LogLine "[ABORT] No credentials provided. Pipeline stopped."
                             return
@@ -2042,7 +2066,7 @@ $btnPostAll.Add_Click({
         
         # --- Credential Prompt #2: Offer/Action Creation ---
         LogLine "Requesting offer/action creation credentials..."
-        $offerCreds = Show-CredentialDialog -Title "Offer/Action Creation Credentials" -Message "Enter credentials for offer/action creation:"
+        $offerCreds = Show-CredentialDialog -Title "Offer/Action Creation Credentials" -Message "Enter credentials for offer/action creation:" -Owner $form -StayOnTop
         if (-not $offerCreds) {
             LogLine "Cancelled - no offer credentials. Fixlets were created successfully."
             LogLine ("Fixlet IDs for manual offer creation: {0}, {1}, {2}" -f $fixletIds[0], $fixletIds[1], $fixletIds[2])
@@ -2087,7 +2111,7 @@ $btnPostAll.Add_Click({
                     LogLine ("[ERROR] QA Offer failed for {0}: {1}" -f $kinds[$i], $errMsg)
                     if ($errMsg -match "401|Unauthorized") {
                         LogLine "[!] Authentication failed for offers - please re-enter credentials"
-                        $offerCreds = Show-CredentialDialog -Title "Offer Credentials (Retry)" -Message "Authentication failed (401). Please re-enter your offer credentials:"
+                        $offerCreds = Show-CredentialDialog -Title "Offer Credentials (Retry)" -Message "Authentication failed (401). Please re-enter your offer credentials:" -Owner $form -StayOnTop
                         if (-not $offerCreds) {
                             LogLine "[ABORT] No credentials provided. Remaining offers skipped."
                             break
@@ -2323,7 +2347,7 @@ $script:PipelineComplete = $false
 $btnCreateDoc.Add_Click({
     $vendor   = $tbVendor.Text.Trim()
     $appName  = $tbAppName.Text.Trim()
-    $version  = if ($tbFileVersion.Text.Trim()) { $tbFileVersion.Text.Trim() } else { $tbPkgVersion.Text.Trim() }
+    $version  = $tbPkgVersion.Text.Trim()
     $author   = $tbAuthor.Text.Trim()
     $psadtFolder = $tbPsadtPath.Text
     $server   = $cbServer.SelectedItem

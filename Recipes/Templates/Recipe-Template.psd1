@@ -5,6 +5,10 @@
     Vendor = 'REPLACE WITH VENDOR'
     Description = 'REPLACE WITH A SHORT DESCRIPTION OF THE CUSTOM PACKAGE STEPS'
 
+    # Optional. UNC/absolute paths are used as written; relative paths are
+    # resolved from this recipe file's folder.
+    FixletIconPath = ''
+
     Sections = @{
         # Runs after the Unified Packager's automatic pre-install process kills.
         PreInstall = @'
