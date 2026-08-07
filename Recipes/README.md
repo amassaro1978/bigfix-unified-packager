@@ -18,6 +18,9 @@ the application, and filling in only the sections the package needs. The
 `RecipeVersion`, `Vendor`, `Description`, `FixletIconPath`,
 `ProcessesToKill`, and `DesktopShortcutName` are optional metadata.
 
+Selecting a recipe copies its `Vendor` and `Name` values into the Unified
+Packager's Vendor and Application Name fields.
+
 When `FixletIconPath` is set, selecting the recipe automatically selects and
 previews that image in the Unified Packager's Fixlet Icon field. Use a trusted
 PNG, JPG, JPEG, or ICO file. UNC and absolute paths are used as written;

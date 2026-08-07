@@ -1830,6 +1830,9 @@ $cbRecipe.Add_SelectedIndexChanged({
     try {
         $script:SelectedRecipe = Get-SelectedPsadtRecipe
         if ($script:SelectedRecipe) {
+            $tbVendor.Text = ([string]$script:SelectedRecipe.Vendor).Trim()
+            $tbAppName.Text = ([string]$script:SelectedRecipe.Name).Trim()
+
             $description = [string]$script:SelectedRecipe.Description
             $lblRecipeStatus.Text = if ($description) {
                 $description
