@@ -376,16 +376,18 @@ function Parse-PsadtFolder {
         FilesFolder   = ""
     }
     
-    if (-not (Test-Path $FolderPath)) { throw "PSADT folder not found: $FolderPath" }
+    if (-not (Test-Path -LiteralPath $FolderPath -PathType Container)) {
+        throw "PSADT folder not found: $FolderPath"
+    }
     
     # Find the renamed Invoke-AppDeployToolkit exe
-    $exeFiles = Get-ChildItem -Path $FolderPath -Filter "*.exe" -File |
+    $exeFiles = Get-ChildItem -LiteralPath $FolderPath -Filter "*.exe" -File -ErrorAction Stop |
         Where-Object { $_.Name -notmatch '(?i)ServiceUI|Deploy-Application|Invoke-AppDeployToolkit\.exe$' }
     $psadtExe = $exeFiles | Where-Object { $_.Name -match '^[A-Za-z].*-[\d]' } | Select-Object -First 1
     
     if (-not $psadtExe) {
         # Fallback: look for the renamed Invoke-AppDeployToolkit pattern
-        $psadtExe = Get-ChildItem -Path $FolderPath -Filter "*.exe" -File |
+        $psadtExe = Get-ChildItem -LiteralPath $FolderPath -Filter "*.exe" -File -ErrorAction Stop |
             Where-Object { $_.Name -ne "Invoke-AppDeployToolkit.exe" -and $_.Name -ne "ServiceUI.exe" } |
             Select-Object -First 1
     }
@@ -404,10 +406,10 @@ function Parse-PsadtFolder {
     
     # Check Files folder for installer
     $filesFolder = Join-Path $FolderPath "Files"
-    if (Test-Path $filesFolder) {
+    if (Test-Path -LiteralPath $filesFolder -PathType Container) {
         $result.FilesFolder = $filesFolder
-        $msiFiles = Get-ChildItem -Path $filesFolder -Filter "*.msi" -File
-        $exeInstallers = Get-ChildItem -Path $filesFolder -Filter "*.exe" -File
+        $msiFiles = @(Get-ChildItem -LiteralPath $filesFolder -Filter "*.msi" -File -ErrorAction Stop)
+        $exeInstallers = @(Get-ChildItem -LiteralPath $filesFolder -Filter "*.exe" -File -ErrorAction Stop)
         
         if ($msiFiles.Count -gt 0) {
             $result.InstallerType = "MSI"
@@ -1612,6 +1614,8 @@ $form.Controls.Add($script:LogBox)
 $script:GeneratedScriptPath = $null
 $script:SelectedRecipe = $null
 $script:RecipePathByDisplay = @{}
+$script:InstallerType = "Unknown"
+$script:InstallerFile = ""
 
 function Refresh-RecipeList {
     param([string]$PreferredPath = "")
@@ -1760,6 +1764,11 @@ function Load-PsadtFolder {
     }
     $tbPsadtPath.Text = $FolderPath
     LogLine "Selected folder: $FolderPath"
+
+    # Never carry installer metadata from a previously selected package into
+    # this one if the new path cannot be read or contains no supported file.
+    $script:InstallerType = "Unknown"
+    $script:InstallerFile = ""
     
     try {
         $info = Parse-PsadtFolder -FolderPath $FolderPath
@@ -1933,6 +1942,23 @@ $btnGenScript.Add_Click({
         # server share after the dropdown was refreshed are validated and used.
         $selectedRecipe = Get-SelectedPsadtRecipe
 
+        # Re-scan the package immediately before generation. Installer details
+        # previously came only from the Browse/Enter event, so a pasted or
+        # externally changed package path left the cached values blank and the
+        # generated script silently contained only placeholder comments. The
+        # package folder is the source of truth for every generation.
+        $packageInfo = Parse-PsadtFolder -FolderPath $psadtFolder
+        $installerType = [string]$packageInfo.InstallerType
+        $installerFile = [string]$packageInfo.InstallerFile
+        $script:InstallerType = $installerType
+        $script:InstallerFile = $installerFile
+
+        if ($installerFile) {
+            LogLine ("Generation detected installer: {0} ({1})" -f $installerType, $installerFile)
+        } else {
+            LogLine "[!] No MSI or EXE was detected in the package Files folder; automatic install/uninstall commands will not be added."
+        }
+
         Generate-DeployScript `
             -Vendor $vendor `
             -AppName $appName `
@@ -1941,8 +1967,8 @@ $btnGenScript.Add_Click({
             -ShortcutName $shortcut `
             -Author $author `
             -OutputPath $outputPath `
-            -InstallerType $script:InstallerType `
-            -InstallerFile $script:InstallerFile `
+            -InstallerType $installerType `
+            -InstallerFile $installerFile `
             -Recipe $selectedRecipe
         
         $script:GeneratedScriptPath = $outputPath
